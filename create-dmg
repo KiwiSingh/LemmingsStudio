@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# LemmingsStudio DMG packager.
+# Usage:
+#   ./create-dmg
+#   APP_PATH=dist/LemmingsStudio.app DMG_NAME=LemmingsStudio-beta.dmg ./create-dmg
+#
+# This script intentionally does not alter the app bundle signing/build logic.
+# It stages the finished .app plus an installer helper, then asks hdiutil to make a DMG.
+
+APP_PATH="${APP_PATH:-dist/LemmingsStudio.app}"
+OUTPUT_DIR="${OUTPUT_DIR:-dist}"
+VOLUME_NAME="${VOLUME_NAME:-LemmingsStudio Installer}"
+DMG_NAME="${DMG_NAME:-LemmingsStudio.dmg}"
+STAGING_DIR="${STAGING_DIR:-.build/dmg-staging}"
+HELPER_SRC="${HELPER_SRC:-Scripts/install-lemmingsstudio.command}"
+README_SRC="${README_SRC:-Docs/YouTubeBetaFAQ.md}"
+
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+  cat <<USAGE
+Usage:
+  ./create-dmg
+
+Environment overrides:
+  APP_PATH       Path to LemmingsStudio.app. Default: dist/LemmingsStudio.app
+  OUTPUT_DIR     Directory for generated DMG. Default: dist
+  DMG_NAME       DMG filename. Default: LemmingsStudio.dmg
+  VOLUME_NAME    Mounted DMG volume name. Default: LemmingsStudio Installer
+  STAGING_DIR    Temporary staging folder. Default: .build/dmg-staging
+
+Example:
+  APP_PATH="dist/LemmingsStudio.app" \
+  DMG_NAME="LemmingsStudio-beta1-mac.dmg" \
+  ./create-dmg
+USAGE
+  exit 0
+fi
+
+if [[ "$(uname -s)" != "Darwin" ]]; then
+  echo "error: create-dmg requires macOS because it uses hdiutil." >&2
+  exit 1
+fi
+
+if ! command -v hdiutil >/dev/null 2>&1; then
+  echo "error: hdiutil was not found." >&2
+  exit 1
+fi
+
+if [[ ! -d "$APP_PATH" ]]; then
+  echo "error: app bundle not found: $APP_PATH" >&2
+  echo "Build the app first, or pass APP_PATH=/path/to/LemmingsStudio.app" >&2
+  exit 1
+fi
+
+if [[ ! -f "$HELPER_SRC" ]]; then
+  echo "error: installer helper not found: $HELPER_SRC" >&2
+  exit 1
+fi
+
+mkdir -p "$OUTPUT_DIR"
+rm -rf "$STAGING_DIR"
+mkdir -p "$STAGING_DIR"
+
+APP_NAME="$(basename "$APP_PATH")"
+echo "• Staging $APP_NAME"
+/usr/bin/ditto "$APP_PATH" "$STAGING_DIR/$APP_NAME"
+
+echo "• Adding installer helper"
+cp "$HELPER_SRC" "$STAGING_DIR/Install LemmingsStudio.command"
+chmod +x "$STAGING_DIR/Install LemmingsStudio.command"
+
+if [[ -f "$README_SRC" ]]; then
+  cp "$README_SRC" "$STAGING_DIR/README-FAQ.md"
+fi
+
+cat > "$STAGING_DIR/README-FIRST.txt" <<README
+LemmingsStudio beta installer
+
+1. Double-click "Install LemmingsStudio.command".
+2. Choose internal /Applications or an external drive's Applications folder.
+3. The helper will ask for your password only when it needs to bless/trust the installed app bundle.
+
+Manual install also works: drag LemmingsStudio.app to /Applications or to an Applications folder on an external drive.
+README
+
+DMG_PATH="$OUTPUT_DIR/$DMG_NAME"
+rm -f "$DMG_PATH"
+
+echo "• Creating DMG: $DMG_PATH"
+hdiutil create \
+  -volname "$VOLUME_NAME" \
+  -srcfolder "$STAGING_DIR" \
+  -ov \
+  -format UDZO \
+  "$DMG_PATH"
+
+echo "✓ Created $DMG_PATH"
+echo "  Tip: open it with: open '$DMG_PATH'"
