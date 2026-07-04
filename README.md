@@ -236,7 +236,7 @@ Useful issue reports should include:
 
 ## License
 
-License information should be finalized before public source release. Add the project license file at the repository root before accepting external contributions.
+LemmingsStudio is available under the GNU General Public License v3. See `LICENSE.md` for further details.
 
 ## Copyright
 
