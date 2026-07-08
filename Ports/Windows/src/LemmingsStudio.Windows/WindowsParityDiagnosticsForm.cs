@@ -37,6 +37,7 @@ public sealed class WindowsParityDiagnosticsForm : Form
         sb.AppendLine($"OS: {Environment.OSVersion}");
         sb.AppendLine($"Refresh rate detected: {DisplayRefreshRateDetector.DetectPrimaryRefreshRate(60)} Hz");
         sb.AppendLine($"Native VST3 host: {Vst3NativeHostBridge.Shared.StatusText}");
+        sb.AppendLine($"Native VST3 host crash count: {Vst3NativeHostBridge.Shared.CrashCount}");
         sb.AppendLine($"ffmpeg: {FindTool(\"ffmpeg.exe\") ?? FindTool(\"ffmpeg\") ?? \"not found\"}");
         sb.AppendLine();
         sb.AppendLine("Project summary:");
@@ -46,6 +47,12 @@ public sealed class WindowsParityDiagnosticsForm : Form
         sb.AppendLine($"  MIDI clips: {project.Tracks.Sum(t => t.Clips.Count(c => c.Type == ClipType.Midi))}");
         sb.AppendLine($"  Step sequencer tracks: {project.Tracks.Count(t => t.UseStepSequencer)}");
         sb.AppendLine($"  VST3 devices: {project.Tracks.SelectMany(t => t.Devices).Count(d => d.IsVst3)}");
+        var health = ProjectHealthService.Audit(project);
+        sb.AppendLine();
+        sb.AppendLine("Project health:");
+        sb.AppendLine(health.Summary());
+        sb.AppendLine();
+        sb.AppendLine(StartupSanityService.Run());
         output.Text = sb.ToString();
     }
 

@@ -1,0 +1,72 @@
+name: LemmingsStudioVision
+options:
+  bundleIdPrefix: com.magmavance
+packages:
+  MLXSwiftLM:
+    url: https://github.com/ml-explore/mlx-swift-lm
+    version: 3.31.4
+  SwiftHuggingFace:
+    url: https://github.com/huggingface/swift-huggingface
+    from: 0.9.0
+  SwiftTransformers:
+    url: https://github.com/huggingface/swift-transformers
+    from: 1.3.0
+settings:
+  base:
+    SWIFT_VERSION: 6.0
+    PRODUCT_NAME: LemmingsStudio
+    MARKETING_VERSION: 1.0
+    CURRENT_PROJECT_VERSION: 1.0.0
+    TARGETED_DEVICE_FAMILY: 7
+    GENERATE_INFOPLIST_FILE: NO
+    INFOPLIST_FILE: LemmingsStudioVision/Resources/Info.plist
+    ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    CODE_SIGN_STYLE: Automatic
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+targets:
+  LemmingsStudioVision:
+    type: application
+    platform: visionOS
+    deploymentTarget: "2.0"
+    sources:
+      - path: LemmingsStudioVision
+        excludes:
+          - Resources
+      - path: LemmingsStudioVision/Resources
+        buildPhase: resources
+        excludes:
+          - Info.plist
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.magmavance.LemmingsStudioVision
+    postBuildScripts:
+      - path: Scripts/stage-xcode-models.sh
+        name: Stage visionOS MLX Models
+        basedOnDependencyAnalysis: false
+      - path: Scripts/verify-built-icon.sh
+        name: Verify compiled visionOS AppIcon
+        basedOnDependencyAnalysis: false
+    dependencies:
+      - package: MLXSwiftLM
+        product: MLXVLM
+      - package: MLXSwiftLM
+        product: MLXLMCommon
+      - package: MLXSwiftLM
+        product: MLXHuggingFace
+      - package: SwiftHuggingFace
+        product: HuggingFace
+      - package: SwiftTransformers
+        product: Tokenizers
+    info:
+      path: LemmingsStudioVision/Resources/Info.plist
+      properties:
+        CFBundleDisplayName: LemmingsStudio
+        CFBundleIcons:
+          CFBundlePrimaryIcon: AppIcon
+        CFBundleURLTypes:
+          - CFBundleURLName: com.magmavance.LemmingsStudioVision.splice
+            CFBundleURLSchemes:
+              - lemmingsstudio
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: true
+        UISupportedInterfaceOrientations: []

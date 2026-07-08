@@ -277,6 +277,17 @@ public sealed class OllamaClient
         return s.Trim();
     }
 
+    /// <summary>Pick a chat-tuned Qwen3 model separately from the agent/sound model lane.</summary>
+    public static string RecommendedChatModel()
+    {
+        ulong ram = TotalPhysicalMemoryBytes();
+        double gb = ram / 1024.0 / 1024.0 / 1024.0;
+        if (gb <= 0 || gb < 8) return "qwen3:1.7b";
+        if (gb < 16) return "qwen3:4b";
+        if (gb < 32) return "qwen3:8b";
+        return "qwen3:14b";
+    }
+
     /// <summary>Pick a sensible default model for the machine's RAM (advisory only).</summary>
     public static string RecommendedModel()
     {

@@ -599,7 +599,7 @@ class Vst3HostApplication final : public JUCEApplication
 {
 public:
     const String getApplicationName() override { return "LemmingsVst3Host"; }
-    const String getApplicationVersion() override { return "1.1.0"; }
+    const String getApplicationVersion() override { return "2.0.0"; }
     bool moreThanOneInstanceAllowed() override { return true; }
 
     void initialise (const String&) override

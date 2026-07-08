@@ -19,6 +19,7 @@ public sealed class MidiHardwarePanel : UserControl
     private readonly CheckBox record = new() { Text = "Record MIDI", AutoSize = true };
     private readonly CheckBox countIn = new() { Text = "Count-in", AutoSize = true, Checked = true };
     private readonly CheckBox recordControllers = new() { Text = "CC / pitch / sustain", AutoSize = true, Checked = true };
+    private readonly CheckBox loopRecord = new() { Text = "Loop record", AutoSize = true };
     private readonly TextBox log = new() { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Font = new Font("Consolas", 9) };
     private readonly LiveMidiSynth synth = new();
     private readonly Stopwatch clock = new();
@@ -28,6 +29,7 @@ public sealed class MidiHardwarePanel : UserControl
     private bool sustainDown;
     private bool recordingActive;
     private bool countInPending;
+    private int loopTakeNumber = 1;
 
     public StudioProject? Project { get; set; }
     public Action? Changed;
@@ -68,6 +70,7 @@ public sealed class MidiHardwarePanel : UserControl
         top.Controls.Add(new Label { Text = "Bars", AutoSize = true, Padding = new Padding(2, 8, 2, 0) });
         top.Controls.Add(countBars);
         top.Controls.Add(recordControllers);
+        top.Controls.Add(loopRecord);
         top.Controls.Add(new Label { Text = "PB range", AutoSize = true, Padding = new Padding(12, 8, 4, 0) });
         top.Controls.Add(pitchRange);
         top.Controls.Add(new Label { Text = "Mod depth", AutoSize = true, Padding = new Padding(8, 8, 4, 0) });
@@ -204,9 +207,11 @@ public sealed class MidiHardwarePanel : UserControl
                 }
             }
             if (!recordingActive || !recordControllers.Checked || recordClip == null) return;
+            EnsureLoopTakeForCurrentBeat();
+            if (recordClip == null) return;
             recordClip.MidiEvents.Add(new MidiClipEvent
             {
-                Beat = Quantize(CurrentBeat()),
+                Beat = Quantize(CurrentRecordingBeat()),
                 Kind = kind,
                 Channel = channel,
                 Data1 = data1,
@@ -272,6 +277,7 @@ public sealed class MidiHardwarePanel : UserControl
         sustainedPendingOff.Clear();
         sustainDown = false;
         recordingActive = true;
+        loopTakeNumber = 1;
         clock.Restart();
         Append($"Recording MIDI to {t.Name} / {recordClip.Name} at beat {start:0.##} ({modeBox.SelectedItem}, quantize {quantizeBox.SelectedItem}).");
         Changed?.Invoke();
@@ -296,16 +302,52 @@ public sealed class MidiHardwarePanel : UserControl
         return (double)startBeat.Value + clock.Elapsed.TotalSeconds * bpm / 60.0;
     }
 
+    private double CurrentRecordingBeat()
+    {
+        var absolute = CurrentBeat();
+        if (!loopRecord.Checked) return absolute;
+        double span = Math.Max(1.0, (double)lengthBeats.Value);
+        double elapsed = Math.Max(0, absolute - (double)startBeat.Value);
+        return (double)startBeat.Value + (elapsed % span);
+    }
+
+    private void EnsureLoopTakeForCurrentBeat()
+    {
+        if (!recordingActive || !loopRecord.Checked || recordClip == null || SelectedTrack == null) return;
+        double span = Math.Max(1.0, (double)lengthBeats.Value);
+        double elapsed = Math.Max(0, CurrentBeat() - (double)startBeat.Value);
+        int wantedTake = (int)Math.Floor(elapsed / span) + 1;
+        if (wantedTake <= loopTakeNumber) return;
+
+        // Close held notes at the loop boundary in the old take without re-entering this method.
+        double boundary = (double)startBeat.Value + span;
+        foreach (var kv in active.ToList())
+        {
+            var relStart = Math.Max(0, kv.Value.Beat - recordClip.StartBeat);
+            var len = Math.Max(0.0625, boundary - kv.Value.Beat);
+            recordClip.Notes.Add(new MidiNote(relStart, len, kv.Key, kv.Value.Velocity));
+        }
+        active.Clear(); sustainedPendingOff.Clear(); sustainDown = false;
+        loopTakeNumber = wantedTake;
+        var t = SelectedTrack;
+        recordClip = new ProjectClip { Type = ClipType.Midi, Name = $"MIDI Loop Take {loopTakeNumber}", StartBeat = (double)startBeat.Value, LengthBeats = span };
+        t.Clips.Add(recordClip);
+        Append($"Loop recording: started take {loopTakeNumber}.");
+        Changed?.Invoke();
+    }
+
     private void StartRecordedNote(int note, int velocity)
     {
-        active[note] = (Quantize(CurrentBeat()), velocity);
+        EnsureLoopTakeForCurrentBeat();
+        active[note] = (Quantize(CurrentRecordingBeat()), velocity);
     }
 
     private void FinishRecordedNote(int note)
     {
         if (recordClip == null || !active.TryGetValue(note, out var start)) return;
         active.Remove(note);
-        double end = Quantize(CurrentBeat());
+        EnsureLoopTakeForCurrentBeat();
+        double end = Quantize(CurrentRecordingBeat());
         double len = Math.Max(0.0625, end - start.Beat);
         // Store note positions clip-relative, matching the renderer/piano roll.
         var relStart = Math.Max(0, start.Beat - recordClip.StartBeat);

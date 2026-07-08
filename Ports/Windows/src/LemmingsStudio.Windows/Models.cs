@@ -23,6 +23,14 @@ public sealed class StudioProject
     public bool QuantizeOnRecord { get; set; } = false;
     public double QuantizeGridBeats { get; set; } = 0.25;
     public MidiRecordMode MidiRecordMode { get; set; } = MidiRecordMode.Overdub;
+    // buildfix244: persistent mixer routing state.
+    public List<ReturnBus> ReturnBuses { get; set; } = new()
+    {
+        new ReturnBus { Name = "Return A", ColorHex = "#9A78F5" },
+        new ReturnBus { Name = "Return B", ColorHex = "#58C7B6" }
+    };
+    public float MasterVolume { get; set; } = 1.0f;
+    public bool MasterMuted { get; set; }
 
     public static StudioProject New()
     {
@@ -51,6 +59,9 @@ public sealed class Track
     public bool Armed { get; set; }
     public float Volume { get; set; } = 0.80f;
     public float Pan { get; set; }
+    // buildfix244: post-fader send amounts, keyed by ReturnBus.Id.
+    public Dictionary<Guid, float> Sends { get; set; } = new();
+    public Guid? OutputBusId { get; set; }
     public string? MidiInputName { get; set; }
     public int MidiChannel { get; set; } = 0; // 0 = omni, 1..16 = channel filter
     public int PitchBendRangeSemitones { get; set; } = 2;
@@ -62,6 +73,11 @@ public sealed class Track
     public StepPattern StepPattern { get; set; } = StepPattern.DefaultDrumPattern();
     public List<SequencerLayer> SequencerLayers { get; set; } = SequencerLayer.DefaultKit();
     public string ColorHex { get; set; } = "#6A93F5";
+    // buildfix241: non-destructive freeze metadata. The backup contains the complete
+    // pre-freeze Track JSON so Unfreeze survives save/reopen without sidecar state.
+    public bool Frozen { get; set; }
+    public string? FrozenSourcePath { get; set; }
+    public string? FrozenBackupJson { get; set; }
 
     public static Track Audio(string name) => new()
     {
@@ -87,6 +103,20 @@ public sealed class Track
     };
 }
 
+
+public sealed class ReturnBus
+{
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public string Name { get; set; } = "Return";
+    public bool Muted { get; set; }
+    public bool Solo { get; set; }
+    public float Volume { get; set; } = 0.8f;
+    public float Pan { get; set; }
+    public string ColorHex { get; set; } = "#9A78F5";
+    public List<DeviceSlot> Devices { get; set; } = new();
+    public List<AutomationLane> Automation { get; set; } = new();
+}
+
 public sealed class ProjectClip
 {
     public Guid Id { get; set; } = Guid.NewGuid();
@@ -95,6 +125,8 @@ public sealed class ProjectClip
     public string? SourcePath { get; set; }
     public double StartBeat { get; set; }
     public double LengthBeats { get; set; } = 4;
+    // buildfix242: non-destructive source offset used by Arrangement trim/split.
+    public double SourceOffsetBeats { get; set; }
     public double SourceTempo { get; set; } = 128;
     public double Gain { get; set; } = 1.0;
     public int PitchSemitones { get; set; }

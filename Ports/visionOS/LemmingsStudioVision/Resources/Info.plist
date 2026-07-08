@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDisplayName</key>
+	<string>LemmingsStudio</string>
+	<key>CFBundleIcons</key>
+	<dict>
+		<key>CFBundlePrimaryIcon</key>
+		<string>AppIcon</string>
+	</dict>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>LemmingsStudio uses microphone input to record audio into your project.</string>
+
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.magmavance.LemmingsStudioVision.splice</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>lemmingsstudio</string>
+			</array>
+		</dict>
+	</array>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>LemmingsStudio Project</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>LSHandlerRank</key>
+			<string>Owner</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.magmavance.lemmingsstudio.project</string>
+			</array>
+		</dict>
+	</array>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.magmavance.lemmingsstudio.project</string>
+			<key>UTTypeDescription</key>
+			<string>LemmingsStudio Project</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>com.apple.package</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>lemmingsproject</string>
+				</array>
+				<key>public.mime-type</key>
+				<string>application/vnd.magmavance.lemmingsstudio.project</string>
+			</dict>
+		</dict>
+	</array>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>LemmingsStudio uses Bluetooth MIDI to connect wireless keyboards and controllers such as LUMI Blocks.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>LemmingsStudio discovers and connects to your Mac or PC to host desktop-only audio plug-ins and return audio to Vision Pro.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_lemmings-plugin._tcp</string>
+	</array>
+</dict>
+</plist>

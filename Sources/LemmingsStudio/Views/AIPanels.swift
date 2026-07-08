@@ -4,6 +4,7 @@ import SwiftUI
 
 struct AIBackendPicker: View {
     @Environment(AppState.self) private var app
+    var showsOllamaModelPicker: Bool = true
     @AppStorage("ollamaModelTag") private var modelTag = ""
     @AppStorage("ollamaModelsDir") private var modelsDir = ""
     @State private var installed: Bool? = nil
@@ -26,22 +27,27 @@ struct AIBackendPicker: View {
                 Text(app.claudeAPIKey.isEmpty ? "Paste a Claude API key to enable agentic AI and chat." : "Claude will drive Sound Agent, AI Producer, and Chat.")
                     .font(.caption2).foregroundStyle(.secondary)
             case .ollama:
-                Picker("Model", selection: $modelTag) {
-                    ForEach(OllamaCatalog.all) { Text($0.label).tag($0.tag) }
-                }
-                .onChange(of: modelTag) { _, _ in Task { await refresh() } }
-                HStack(spacing: 4) {
-                    Image(systemName: "externaldrive")
-                    TextField("Models directory", text: $modelsDir).textFieldStyle(.roundedBorder).font(.caption)
-                }
-                if installed == true {
-                    Label("Model installed", systemImage: "checkmark.circle.fill").font(.caption).foregroundStyle(.green)
-                } else if let p = pull {
-                    ProgressView(value: p.fraction)
-                    Text(p.status).font(.caption2).foregroundStyle(.secondary)
+                if showsOllamaModelPicker {
+                    Picker("Agent model", selection: $modelTag) {
+                        ForEach(OllamaCatalog.all) { Text($0.label).tag($0.tag) }
+                    }
+                    .onChange(of: modelTag) { _, _ in Task { await refresh() } }
+                    HStack(spacing: 4) {
+                        Image(systemName: "externaldrive")
+                        TextField("Models directory", text: $modelsDir).textFieldStyle(.roundedBorder).font(.caption)
+                    }
+                    if installed == true {
+                        Label("Agent model installed", systemImage: "checkmark.circle.fill").font(.caption).foregroundStyle(.green)
+                    } else if let p = pull {
+                        ProgressView(value: p.fraction)
+                        Text(p.status).font(.caption2).foregroundStyle(.secondary)
+                    } else {
+                        Button { Task { await download() } } label: { Label("Download agent model", systemImage: "arrow.down.circle") }
+                            .disabled(working)
+                    }
                 } else {
-                    Button { Task { await download() } } label: { Label("Download model", systemImage: "arrow.down.circle") }
-                        .disabled(working)
+                    Text("Chat uses its own chat-tuned Ollama model below. Agentic Sound/Producer models remain separate.")
+                        .font(.caption2).foregroundStyle(.secondary)
                 }
             }
             if !note.isEmpty { Text(note).font(.caption2).foregroundStyle(.orange) }
@@ -50,6 +56,59 @@ struct AIBackendPicker: View {
             if modelTag.isEmpty { modelTag = OllamaCatalog.recommendedForThisMac.tag }
             if modelsDir.isEmpty { modelsDir = OllamaClient.resolveModelsDirectory() ?? "" }
             if app.aiBackend == .ollama { Task { await refresh() } }
+        }
+    }
+
+    private func client() -> OllamaClient { OllamaClient(modelsDirectory: modelsDir.isEmpty ? nil : modelsDir) }
+    private func refresh() async {
+        let yes = await client().isInstalled(modelTag)
+        await MainActor.run { installed = yes }
+    }
+    private func download() async {
+        await MainActor.run { working = true; note = ""; pull = PullProgress(status: "starting", completed: 0, total: 0) }
+        do {
+            try await client().pull(modelTag) { p in Task { @MainActor in self.pull = p } }
+            await MainActor.run { installed = true; pull = nil }
+        } catch {
+            await MainActor.run { pull = nil; note = error.localizedDescription }
+        }
+        await MainActor.run { working = false }
+    }
+}
+
+
+private struct OllamaChatModelPicker: View {
+    @AppStorage("ollamaChatModelTag") private var modelTag = ""
+    @AppStorage("ollamaModelsDir") private var modelsDir = ""
+    @State private var installed: Bool?
+    @State private var pull: PullProgress?
+    @State private var working = false
+    @State private var note = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Picker("Chat model", selection: $modelTag) {
+                ForEach(OllamaChatCatalog.all) { Text($0.label).tag($0.tag) }
+            }
+            .onChange(of: modelTag) { _, _ in Task { await refresh() } }
+
+            if installed == true {
+                Label("Chat model installed", systemImage: "checkmark.circle.fill")
+                    .font(.caption).foregroundStyle(.green)
+            } else if let p = pull {
+                ProgressView(value: p.fraction)
+                Text(p.status).font(.caption2).foregroundStyle(.secondary)
+            } else {
+                Button { Task { await download() } } label: {
+                    Label("Download chat model", systemImage: "arrow.down.circle")
+                }.disabled(working)
+            }
+            if !note.isEmpty { Text(note).font(.caption2).foregroundStyle(.orange) }
+        }
+        .onAppear {
+            if modelTag.isEmpty { modelTag = OllamaChatCatalog.recommendedForThisMac.tag }
+            if modelsDir.isEmpty { modelsDir = OllamaClient.resolveModelsDirectory() ?? "" }
+            Task { await refresh() }
         }
     }
 
@@ -91,7 +150,8 @@ struct GeneralChatView: View {
             Text("General production chat. Ask theory, mashup key, arrangement, mixing, workflow, or troubleshooting questions without editing the project.")
                 .font(.caption).foregroundStyle(.secondary)
 
-            AIBackendPicker()
+            AIBackendPicker(showsOllamaModelPicker: false)
+            if app.aiBackend == .ollama { OllamaChatModelPicker() }
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 8) {
@@ -138,9 +198,9 @@ struct GeneralChatView: View {
                         Label("Ask", systemImage: "bubble.left.and.bubble.right")
                     }
                 }
-                .disabled(working || prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || app.currentBackend().isOffline)
+                .disabled(working || prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || app.currentChatBackend().isOffline)
 
-                if app.currentBackend().isOffline {
+                if app.currentChatBackend().isOffline {
                     Text("Choose Ollama or enter a Claude API key.")
                         .font(.caption2)
                         .foregroundStyle(.orange)

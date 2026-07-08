@@ -47,9 +47,57 @@ public sealed class StepSequencerPanel : UserControl
         stepsBox.ValueChanged += (_, _) => ResizePattern();
         spbBox.ValueChanged += (_, _) => ResizePattern();
 
+        gridHost.AllowDrop = true;
+        gridHost.DragEnter += OnGridDragEnter;
+        gridHost.DragDrop += OnGridDragDrop;
+
         Controls.Add(gridHost);
         Controls.Add(toolbar);
         Controls.Add(header);
+    }
+
+
+    private void OnGridDragEnter(object? sender, DragEventArgs e)
+    {
+        if (e.Data?.GetDataPresent(DataFormats.FileDrop) == true || e.Data?.GetDataPresent(SpliceDropBroker.DataFormat) == true)
+            e.Effect = DragDropEffects.Copy;
+    }
+
+    private async void OnGridDragDrop(object? sender, DragEventArgs e)
+    {
+        if (SelectedTrack is not { } track)
+        {
+            Log?.Invoke("Select a sequencer track before dropping a sample.");
+            return;
+        }
+
+        string? path = null;
+        string name = "Sample";
+        if (e.Data?.GetDataPresent(SpliceDropBroker.DataFormat) == true
+            && e.Data.GetData(SpliceDropBroker.DataFormat) is Features.SpliceSample sample)
+        {
+            var asset = await SpliceDropBroker.ResolveAsync(sample);
+            if (asset == null) { Log?.Invoke("Splice Fetch on Drop failed; sequencer lane unchanged."); return; }
+            path = asset.FilePath; name = asset.Name;
+        }
+        else if (e.Data?.GetData(DataFormats.FileDrop) is string[] files && files.Length > 0)
+        {
+            path = files[0]; name = Path.GetFileNameWithoutExtension(path);
+        }
+
+        if (string.IsNullOrEmpty(path)) return;
+        var client = gridHost.PointToClient(new Point(e.X, e.Y));
+        int row = Math.Max(0, (client.Y - 44) / 32);
+        if (track.SequencerLayers.Count == 0) track.SequencerLayers = SequencerLayer.DefaultKit();
+        SequencerLayer layer;
+        if (row < track.SequencerLayers.Count) layer = track.SequencerLayers[row];
+        else
+        {
+            layer = new SequencerLayer { Name = name, Note = Math.Min(127, 60 + track.SequencerLayers.Count) };
+            track.SequencerLayers.Add(layer);
+        }
+        layer.Name = name; layer.SourcePath = path; track.UseStepSequencer = true;
+        RebuildGrid(); Changed?.Invoke(); Log?.Invoke($"Loaded sample {name} into sequencer lane {layer.Name}.");
     }
 
     private void AddButton(string text, EventHandler click)

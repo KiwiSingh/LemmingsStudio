@@ -62,6 +62,11 @@ public struct SoundAgent {
         in-range values. Prefer normalized 0...1 values when the exact AU range is unknown.
         The presetName should be a short patch name like "80s Synthwave Pluck", not
         the literal prompt and not the first few words of the prompt.
+
+        IMPORTANT: never claim that you changed a control the host cannot access. When an important
+        control, mode, wavetable, routing switch, modulation assignment, or FX setting is unavailable,
+        include concise manual completion steps in the notes field. Name the exact knob/control path,
+        give a direction or approximate value/range, and state the listening goal.
         """
         do {
             let client = LLMClient(backend: backend)

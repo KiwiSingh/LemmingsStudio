@@ -8,7 +8,7 @@ param(
     [switch]$SkipFfmpeg,
     [string]$FfmpegSource = "",
     [string[]]$ModelNames = @("htdemucs", "htdemucs_ft", "htdemucs_6s"),
-    [string]$Version = "1.1.0",
+    [string]$Version = "2.0.0",
     [switch]$SkipNativeVst3Host,
     [switch]$RequireNativeVst3Host,
     [switch]$SkipNativeVst3ToolchainBootstrap,

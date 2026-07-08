@@ -9,7 +9,7 @@ public sealed class MainForm : Form
     private readonly ArrangementCanvas arrangement = new() { Dock = DockStyle.Fill };
     private readonly TextBox logBox = new() { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill, Font = new Font("Consolas", 9) };
     private readonly TreeView browserTree = new() { Dock = DockStyle.Fill };
-    private readonly ListView mixerList = new() { Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true };
+    private readonly Features.MixerPanel mixerPanel = new();
     private readonly ListView automationList = new() { Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true };
     private readonly ClipInspectorPanel inspector = new() { Dock = DockStyle.Fill };
     private readonly SessionLauncherPanel sessionLauncher = new();
@@ -34,6 +34,9 @@ public sealed class MainForm : Form
     private ToolStripLabel? tempoLabel;
     private string? projectPath;
     private CancellationTokenSource? scanCts;
+    private readonly ProjectRecoveryService recovery = new();
+    private readonly System.Windows.Forms.Timer autosaveTimer = new() { Interval = 60_000 };
+    private readonly List<string> recentLogs = new();
 
     public MainForm()
     {
@@ -42,7 +45,7 @@ public sealed class MainForm : Form
         Height = 860;
         MinimumSize = new Size(1024, 680);
         arrangement.Project = project;
-        arrangement.ProjectChanged += RefreshAll;
+        arrangement.ProjectChanged += () => { recovery.MarkDirty(); RefreshAll(); };
         arrangement.ClipSelectionChanged += clip => inspector.Reload(clip);
         arrangement.Log += AppendLog;
         runner.Log += AppendLog;
@@ -50,9 +53,18 @@ public sealed class MainForm : Form
         scanner.Status += s => BeginInvoke((Action)(() => SetStatus(s)));
         engine.Log += AppendLog;
         aiPanel.Log = AppendLog;
+        aiPanel.SelectedClipProvider = () => arrangement.PrimarySelection;
         engine.PlaybackStopped += () => BeginInvoke((Action)(() => { if (playButton != null) playButton.Text = "▶ Play"; SetStatus("Playback finished"); }));
         MidiService.Shared.ControlChange += OnMidiControlChange;
         Vst3NativeHostBridge.Shared.Log += AppendLog;
+        Vst3NativeHostBridge.Shared.HostCrashed += () => BeginInvoke((Action)(() =>
+        {
+            SetStatus("Native VST3 host crashed — restart available in Tools");
+            AppendLog("Native VST3 helper crash detected. Stale plug-in hydration state was cleared for safe restart.");
+        }));
+        AppPaths.EnsureFirstRunFolders();
+        autosaveTimer.Tick += (_, _) => RunAutosave();
+        autosaveTimer.Start();
 
         BackColor = Color.FromArgb(18, 20, 26);
         Controls.Add(BuildShell());
@@ -65,7 +77,9 @@ public sealed class MainForm : Form
         RefreshAll();
         AppendLog("Windows feature-parity port loaded. Startup sound, Arrangement, Session Launcher, Step Sequencer, Piano Roll, Devices, Mixer, Automation, Splice and agent panels are active parity targets.");
         AppendLog(Vst3NativeHostBridge.Shared.StatusText);
+        AppendLog(StartupSanityService.Run());
         _ = DetectHardwareAsync(initial: true);
+        Shown += (_, _) => OfferRecoveryIfAvailable();
     }
 
 
@@ -126,6 +140,7 @@ public sealed class MainForm : Form
         file.DropDownItems.Add("Open…", null, (_, _) => OpenProject());
         file.DropDownItems.Add("Save", null, (_, _) => SaveProject(false));
         file.DropDownItems.Add("Save As…", null, (_, _) => SaveProject(true));
+        file.DropDownItems.Add("Relink Missing Media…", null, (_, _) => RelinkMissingMedia());
         file.DropDownItems.Add("Export Audio…", null, (_, _) => ExportAudio());
         file.DropDownItems.Add(new ToolStripSeparator());
         file.DropDownItems.Add("Exit", null, (_, _) => Close());
@@ -133,10 +148,16 @@ public sealed class MainForm : Form
         var projectMenu = new ToolStripMenuItem("Project");
         projectMenu.DropDownItems.Add("Set Tempo…", null, (_, _) => SetTempo());
         projectMenu.DropDownItems.Add("Set Key…", null, (_, _) => SetKey());
-        projectMenu.DropDownItems.Add("Add Audio Track", null, (_, _) => { project.Tracks.Add(Track.Audio("Audio " + (project.Tracks.Count + 1))); RefreshAll(); });
-        projectMenu.DropDownItems.Add("Add Instrument Track", null, (_, _) => { project.Tracks.Add(Track.Instrument("Instrument " + (project.Tracks.Count + 1))); RefreshAll(); });
-        projectMenu.DropDownItems.Add("Add MIDI Track", null, (_, _) => { var t = Track.Instrument("MIDI " + (project.Tracks.Count + 1)); t.Type = TrackType.Midi; project.Tracks.Add(t); RefreshAll(); });
-        projectMenu.DropDownItems.Add("Add Sequencer Track", null, (_, _) => { var t = Track.Instrument("Sequencer " + (project.Tracks.Count + 1)); t.UseStepSequencer = true; t.Devices.Clear(); t.Devices.Add(DeviceSlot.Stock("Drum Machine")); project.Tracks.Add(t); RefreshAll(); });
+        projectMenu.DropDownItems.Add("Add Audio Track", null, (_, _) => { project.Tracks.Add(Track.Audio("Audio " + (project.Tracks.Count + 1))); recovery.MarkDirty(); RefreshAll(); });
+        projectMenu.DropDownItems.Add("Add Instrument Track", null, (_, _) => { project.Tracks.Add(Track.Instrument("Instrument " + (project.Tracks.Count + 1))); recovery.MarkDirty(); RefreshAll(); });
+        projectMenu.DropDownItems.Add("Add MIDI Track", null, (_, _) => { var t = Track.Instrument("MIDI " + (project.Tracks.Count + 1)); t.Type = TrackType.Midi; project.Tracks.Add(t); recovery.MarkDirty(); RefreshAll(); });
+        projectMenu.DropDownItems.Add("Add Sequencer Track", null, (_, _) => { var t = Track.Instrument("Sequencer " + (project.Tracks.Count + 1)); t.UseStepSequencer = true; t.Devices.Clear(); t.Devices.Add(DeviceSlot.Stock("Drum Machine")); project.Tracks.Add(t); recovery.MarkDirty(); RefreshAll(); });
+        projectMenu.DropDownItems.Add(new ToolStripSeparator());
+        projectMenu.DropDownItems.Add("Bounce Selected Clip", null, (_, _) => RunBounceSelected());
+        projectMenu.DropDownItems.Add("Consolidate Selected Clips", null, (_, _) => RunConsolidateSelected());
+        projectMenu.DropDownItems.Add("Freeze Selected Track", null, (_, _) => RunFreezeSelectedTrack());
+        projectMenu.DropDownItems.Add("Unfreeze Selected Track", null, (_, _) => RunUnfreezeSelectedTrack());
+        projectMenu.DropDownItems.Add("Flatten Selected Track", null, (_, _) => RunFlattenSelectedTrack());
 
         var tools = new ToolStripMenuItem("Tools");
         tools.DropDownItems.Add("Detect Hardware…", null, async (_, _) => await DetectHardwareAsync(initial: false));
@@ -157,7 +178,14 @@ public sealed class MainForm : Form
             else
                 MessageBox.Show(this, Vst3NativeHostBridge.Shared.LastError.Length == 0 ? Vst3NativeHostBridge.Shared.StatusText : Vst3NativeHostBridge.Shared.LastError, "Native VST3 Host", MessageBoxButtons.OK, MessageBoxIcon.Information);
         });
+        tools.DropDownItems.Add("Restart Native VST3 Host", null, (_, _) =>
+        {
+            var ok = Vst3NativeHostBridge.Shared.Restart(this);
+            AppendLog(ok ? "Native VST3 host restarted." : "Native VST3 host restart failed: " + Vst3NativeHostBridge.Shared.LastError);
+            SetStatus(ok ? "Native VST3 host restarted" : "VST3 host restart failed");
+        });
         tools.DropDownItems.Add("Windows Parity Diagnostics…", null, (_, _) => new WindowsParityDiagnosticsForm(project, engine, AppendLog).Show(this));
+        tools.DropDownItems.Add("Export Diagnostics Bundle…", null, (_, _) => ExportDiagnosticsBundle());
 
         menu.Items.Add(file);
         menu.Items.Add(projectMenu);
@@ -240,7 +268,7 @@ public sealed class MainForm : Form
         tabs.TabPages.Add(new TabPage("Step Sequencer") { Controls = { stepSequencer } });
         tabs.TabPages.Add(new TabPage("Piano Roll") { Controls = { pianoRoll } });
         tabs.TabPages.Add(new TabPage("Devices") { Controls = { deviceRack } });
-        tabs.TabPages.Add(new TabPage("Mixer") { Controls = { mixerList } });
+        tabs.TabPages.Add(new TabPage("Mixer") { Controls = { mixerPanel } });
         tabs.TabPages.Add(new TabPage("Automation") { Controls = { BuildAutomationPanel() } });
         tabs.TabPages.Add(new TabPage("Audio Recording") { Controls = { audioRecordingPanel } });
         tabs.TabPages.Add(new TabPage("MIDI / Hardware") { Controls = { midiPanel } });
@@ -264,7 +292,7 @@ public sealed class MainForm : Form
         scan.Click += (_, _) => ChooseAndScanLibrary();
         header.Controls.Add(new Label { Text = "Browser", AutoSize = true, Padding = new Padding(0, 7, 8, 0) });
         var addSeq = new Button { Text = "Add Sequencer" };
-        addSeq.Click += (_, _) => { var t = Track.Instrument("Sequencer " + (project.Tracks.Count + 1)); t.UseStepSequencer = true; t.Devices.Clear(); t.Devices.Add(DeviceSlot.Stock("Drum Machine")); project.Tracks.Add(t); RefreshAll(); };
+        addSeq.Click += (_, _) => { var t = Track.Instrument("Sequencer " + (project.Tracks.Count + 1)); t.UseStepSequencer = true; t.Devices.Clear(); t.Devices.Add(DeviceSlot.Stock("Drum Machine")); project.Tracks.Add(t); recovery.MarkDirty(); RefreshAll(); };
         header.Controls.Add(scan);
         header.Controls.Add(addSeq);
         SeedBrowserCatalog();
@@ -314,39 +342,39 @@ public sealed class MainForm : Form
         arrangement.Project = project;
         arrangement.Invalidate();
         sessionLauncher.Project = project;
-        sessionLauncher.Changed = RefreshAll;
+        sessionLauncher.Changed = () => { recovery.MarkDirty(); RefreshAll(); };
         sessionLauncher.ClipSelected = clip => { inspector.Reload(clip); arrangement.SelectedClipIds.Clear(); if (clip != null) arrangement.SelectedClipIds.Add(clip.Id); arrangement.Invalidate(); };
         sessionLauncher.Log = AppendLog;
         sessionLauncher.Reload();
         RefreshMixer();
         RefreshAutomation();
         stepSequencer.Project = project;
-        stepSequencer.Changed = () => { RefreshAll(); SetStatus("Step Sequencer updated"); };
+        stepSequencer.Changed = () => { recovery.MarkDirty(); RefreshAll(); SetStatus("Step Sequencer updated"); };
         stepSequencer.Log = AppendLog;
         stepSequencer.Reload();
         pianoRoll.Project = project;
-        pianoRoll.Changed = () => { arrangement.Invalidate(); SetStatus("Piano Roll updated"); };
+        pianoRoll.Changed = () => { recovery.MarkDirty(); arrangement.Invalidate(); SetStatus("Piano Roll updated"); };
         pianoRoll.Reload();
         deviceRack.Project = project;
-        deviceRack.Changed = () => { SetStatus("Device chain updated"); arrangement.Invalidate(); };
+        deviceRack.Changed = () => { recovery.MarkDirty(); SetStatus("Device chain updated"); arrangement.Invalidate(); };
         deviceRack.Log = AppendLog;
         deviceRack.Reload();
         midiPanel.Project = project;
-        midiPanel.Changed = () => { arrangement.Invalidate(); RefreshMixer(); SetStatus("MIDI updated"); };
+        midiPanel.Changed = () => { recovery.MarkDirty(); arrangement.Invalidate(); RefreshMixer(); SetStatus("MIDI updated"); };
         midiPanel.ExternalLog = AppendLog;
         midiPanel.Reload();
         audioRecordingPanel.Project = project;
         audioRecordingPanel.ProjectPathProvider = () => projectPath;
-        audioRecordingPanel.Changed = () => { arrangement.Invalidate(); RefreshMixer(); SetStatus("Audio recording updated"); RefreshAll(); };
+        audioRecordingPanel.Changed = () => { recovery.MarkDirty(); arrangement.Invalidate(); RefreshMixer(); SetStatus("Audio recording updated"); RefreshAll(); };
         audioRecordingPanel.ExternalLog = AppendLog;
         audioRecordingPanel.Reload();
         aiPanel.Project = project;
-        aiPanel.OnProjectChanged = () => { RefreshAll(); SetStatus("AI agent updated the project"); };
+        aiPanel.OnProjectChanged = () => { recovery.MarkDirty(); RefreshAll(); SetStatus("AI agent updated the project"); };
         splicePanel.Project = project;
-        splicePanel.OnProjectChanged = () => { RefreshAll(); SetStatus("Added a Splice sample"); };
+        splicePanel.OnProjectChanged = () => { recovery.MarkDirty(); RefreshAll(); SetStatus("Added a Splice sample"); };
         splicePanel.Log = AppendLog;
         inspector.Project = project;
-        inspector.Changed = () => { arrangement.Invalidate(); RefreshMixer(); SetStatus("Inspector updated"); };
+        inspector.Changed = () => { recovery.MarkDirty(); arrangement.Invalidate(); RefreshMixer(); SetStatus("Inspector updated"); };
         inspector.Reload(arrangement.PrimarySelection);
         if (metronomeButton != null) { metronomeButton.Checked = project.MetronomeEnabled; metronomeButton.Text = project.MetronomeEnabled ? "● Metro" : "○ Metro"; }
         if (tempoLabel != null) tempoLabel.Text = $"{project.Tempo:0.#} BPM • {project.Key}";
@@ -356,29 +384,11 @@ public sealed class MainForm : Form
 
     private void RefreshMixer()
     {
-        if (mixerList.Columns.Count == 0)
-        {
-            mixerList.Columns.Add("Track", 180);
-            mixerList.Columns.Add("Type", 90);
-            mixerList.Columns.Add("Vol", 60);
-            mixerList.Columns.Add("Pan", 60);
-            mixerList.Columns.Add("M", 40);
-            mixerList.Columns.Add("S", 40);
-            mixerList.Columns.Add("Arm", 50);
-        }
-        mixerList.Items.Clear();
-        foreach (var t in project.Tracks)
-        {
-            var item = new ListViewItem(t.Name);
-            item.SubItems.Add(t.Type.ToString());
-            item.SubItems.Add(t.Volume.ToString("0.00"));
-            item.SubItems.Add(t.Pan.ToString("0.00"));
-            item.SubItems.Add(t.Muted ? "Y" : "");
-            item.SubItems.Add(t.Solo ? "Y" : "");
-            item.SubItems.Add(t.Armed ? "Y" : "");
-            item.Tag = t;
-            mixerList.Items.Add(item);
-        }
+        mixerPanel.Project = project;
+        mixerPanel.Engine = engine;
+        mixerPanel.Log = AppendLog;
+        mixerPanel.Changed = () => { recovery.MarkDirty(); arrangement.Invalidate(); SetStatus("Mixer updated"); };
+        mixerPanel.Reload();
     }
 
     private void RefreshAutomation()
@@ -488,22 +498,52 @@ public sealed class MainForm : Form
 
     private void NewProject()
     {
-        project.Tracks.Clear();
-        project.Tracks.AddRange(StudioProject.New().Tracks);
-        project.GlobalAutomation = StudioProject.New().GlobalAutomation;
-        project.Name = "Untitled";
-        project.Tempo = 128;
-        project.Key = "C minor";
-        project.MetronomeEnabled = false;
+        if (!ConfirmDiscardUnsaved()) return;
+        ApplyLoadedProject(StudioProject.New());
         projectPath = null;
+        recovery.MarkClean();
         RefreshAll();
     }
 
     private void OpenProject()
     {
+        if (!ConfirmDiscardUnsaved()) return;
         using var dialog = new OpenFileDialog { Filter = "LemmingsStudio project|*.lemmingsproject|JSON|*.json|All files|*.*" };
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
-        var loaded = ProjectIO.Load(dialog.FileName);
+        try
+        {
+            var loaded = ProjectIO.Load(dialog.FileName);
+            ApplyLoadedProject(loaded);
+            projectPath = dialog.FileName;
+            recovery.MarkClean();
+            RefreshAll();
+            AuditOpenedProject();
+        }
+        catch (Exception ex)
+        {
+            AppendLog("Project open failed: " + ex.Message);
+            MessageBox.Show(this, ex.Message, "Open Project", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    private void SaveProject(bool saveAs)
+    {
+        if (saveAs || string.IsNullOrWhiteSpace(projectPath))
+        {
+            using var dialog = new SaveFileDialog { Filter = "LemmingsStudio project|*.lemmingsproject", FileName = project.Name + ".lemmingsproject", InitialDirectory = AppPaths.UserProjects };
+            if (dialog.ShowDialog(this) != DialogResult.OK) return;
+            projectPath = dialog.FileName;
+            project.Name = Path.GetFileNameWithoutExtension(projectPath);
+        }
+        ProjectIO.SaveAtomic(projectPath!, project);
+        recovery.MarkClean();
+        recovery.DeleteRecovery(projectPath, project.Name);
+        AppendLog("Saved " + projectPath);
+        RefreshAll();
+    }
+
+    private void ApplyLoadedProject(StudioProject loaded)
+    {
         project.Name = loaded.Name;
         project.Tempo = loaded.Tempo;
         project.Key = loaded.Key;
@@ -516,22 +556,91 @@ public sealed class MainForm : Form
         project.QuantizeOnRecord = loaded.QuantizeOnRecord;
         project.QuantizeGridBeats = loaded.QuantizeGridBeats <= 0 ? 0.25 : loaded.QuantizeGridBeats;
         project.MidiRecordMode = loaded.MidiRecordMode;
-        projectPath = dialog.FileName;
+        project.ReturnBuses = loaded.ReturnBuses;
+        project.MasterVolume = loaded.MasterVolume;
+        project.MasterMuted = loaded.MasterMuted;
+    }
+
+    private bool ConfirmDiscardUnsaved()
+    {
+        if (!recovery.IsDirty) return true;
+        var result = MessageBox.Show(this, "This project has unsaved changes. Save before continuing?", "Unsaved Changes", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Warning);
+        if (result == DialogResult.Cancel) return false;
+        if (result == DialogResult.Yes)
+        {
+            SaveProject(false);
+            return !recovery.IsDirty;
+        }
+        return true;
+    }
+
+    private void RunAutosave()
+    {
+        if (!recovery.IsDirty) return;
+        try
+        {
+            var path = recovery.Autosave(project, projectPath);
+            AppendLog("Recovery autosave written: " + path);
+            SetStatus("Recovery autosaved " + DateTime.Now.ToString("HH:mm:ss"));
+        }
+        catch (Exception ex) { AppendLog("Autosave failed: " + ex.Message); }
+    }
+
+    private void OfferRecoveryIfAvailable()
+    {
+        var candidate = ProjectRecoveryService.FindNewestRecovery();
+        if (candidate == null) return;
+        var answer = MessageBox.Show(this, $"A recovery autosave was found for '{candidate.ProjectName}' from {candidate.SavedUtc.ToLocalTime():g}. Recover it now?", "Recover Project", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+        if (answer != DialogResult.Yes) return;
+        try
+        {
+            ApplyLoadedProject(ProjectIO.Load(candidate.RecoveryPath));
+            projectPath = candidate.OriginalProjectPath;
+            recovery.MarkDirty();
+            RefreshAll();
+            AppendLog("Recovered autosave: " + candidate.RecoveryPath);
+        }
+        catch (Exception ex) { MessageBox.Show(this, ex.Message, "Recovery Failed", MessageBoxButtons.OK, MessageBoxIcon.Error); }
+    }
+
+    private void AuditOpenedProject()
+    {
+        var report = ProjectHealthService.Audit(project);
+        if (!report.HasIssues) { AppendLog("Project health check passed."); return; }
+        AppendLog(report.Summary());
+        var answer = MessageBox.Show(this, report.Summary() + Environment.NewLine + Environment.NewLine + "Relink missing media from a folder now? Missing VST3 devices are bypassed rather than crashing the project.", "Project Health Check", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+        if (answer == DialogResult.Yes) RelinkMissingMedia();
         RefreshAll();
     }
 
-    private void SaveProject(bool saveAs)
+    private void RelinkMissingMedia()
     {
-        if (saveAs || string.IsNullOrWhiteSpace(projectPath))
+        using var dialog = new FolderBrowserDialog { Description = "Choose a folder to search recursively for missing media" };
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        try
         {
-            using var dialog = new SaveFileDialog { Filter = "LemmingsStudio project|*.lemmingsproject", FileName = project.Name + ".lemmingsproject" };
-            if (dialog.ShowDialog(this) != DialogResult.OK) return;
-            projectPath = dialog.FileName;
-            project.Name = Path.GetFileNameWithoutExtension(projectPath);
+            Cursor = Cursors.WaitCursor;
+            var count = ProjectHealthService.RelinkMissingMedia(project, dialog.SelectedPath);
+            if (count > 0) recovery.MarkDirty();
+            RefreshAll();
+            MessageBox.Show(this, $"Relinked {count} missing media file(s).", "Relink Media", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
-        ProjectIO.Save(projectPath!, project);
-        AppendLog("Saved " + projectPath);
-        RefreshAll();
+        catch (Exception ex) { MessageBox.Show(this, ex.Message, "Relink Media", MessageBoxButtons.OK, MessageBoxIcon.Error); }
+        finally { Cursor = Cursors.Default; }
+    }
+
+    private void ExportDiagnosticsBundle()
+    {
+        try
+        {
+            var zip = DiagnosticsBundleService.Create(project, projectPath, recentLogs);
+            Clipboard.SetText(zip);
+            AppendLog("Diagnostics bundle created: " + zip);
+            MessageBox.Show(this, "Diagnostics bundle created and its path copied to the clipboard:
+
+" + zip, "Diagnostics Bundle", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        catch (Exception ex) { MessageBox.Show(this, ex.Message, "Diagnostics Bundle", MessageBoxButtons.OK, MessageBoxIcon.Error); }
     }
 
     private ExportSettings lastExport = new() { Format = ExportFormat.Wav, BitDepth = 24 };
@@ -572,16 +681,98 @@ public sealed class MainForm : Form
         }
     }
 
+
+    private Track? SelectedTrackForEdit()
+    {
+        var primary = arrangement.PrimarySelection;
+        if (primary != null)
+            return project.Tracks.FirstOrDefault(t => t.Clips.Any(c => c.Id == primary.Id));
+        return project.Tracks.FirstOrDefault(t => t.Armed) ?? project.Tracks.FirstOrDefault();
+    }
+
+    private void RunBounceSelected()
+    {
+        var clip = arrangement.PrimarySelection;
+        if (clip == null) { MessageBox.Show(this, "Select a clip first.", "Bounce", MessageBoxButtons.OK, MessageBoxIcon.Information); return; }
+        var track = project.Tracks.FirstOrDefault(t => t.Clips.Any(c => c.Id == clip.Id));
+        if (track == null) return;
+        RunRenderEdit("Bounce", () => BounceFreezeService.BounceClip(project, track, clip, engine, projectPath));
+    }
+
+    private void RunConsolidateSelected()
+    {
+        var ids = arrangement.SelectedClipIds.ToHashSet();
+        if (ids.Count == 0) { MessageBox.Show(this, "Select one or more clips first.", "Consolidate", MessageBoxButtons.OK, MessageBoxIcon.Information); return; }
+        var tracks = project.Tracks.Where(t => t.Clips.Any(c => ids.Contains(c.Id))).ToList();
+        if (tracks.Count != 1) { MessageBox.Show(this, "Consolidate currently requires all selected clips to be on one track.", "Consolidate", MessageBoxButtons.OK, MessageBoxIcon.Information); return; }
+        RunRenderEdit("Consolidate", () => BounceFreezeService.Consolidate(project, tracks[0], ids, engine, projectPath));
+        arrangement.SelectedClipIds.Clear();
+    }
+
+    private void RunFreezeSelectedTrack()
+    {
+        var track = SelectedTrackForEdit();
+        if (track == null) return;
+        RunRenderEdit("Freeze", () => BounceFreezeService.FreezeTrack(project, track, engine, projectPath));
+    }
+
+    private void RunUnfreezeSelectedTrack()
+    {
+        var track = SelectedTrackForEdit();
+        if (track == null) return;
+        try
+        {
+            BounceFreezeService.UnfreezeTrack(project, track);
+            AppendLog($"Unfroze track '{track.Name}'.");
+            recovery.MarkDirty();
+            RefreshAll();
+        }
+        catch (Exception ex) { MessageBox.Show(this, ex.Message, "Unfreeze", MessageBoxButtons.OK, MessageBoxIcon.Error); }
+    }
+
+    private void RunFlattenSelectedTrack()
+    {
+        var track = SelectedTrackForEdit();
+        if (track == null) return;
+        if (!track.Frozen) { MessageBox.Show(this, "The selected track is not frozen.", "Flatten", MessageBoxButtons.OK, MessageBoxIcon.Information); return; }
+        if (MessageBox.Show(this, "Flatten permanently keeps the frozen audio and discards the editable pre-freeze backup. Continue?", "Flatten Track", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
+        BounceFreezeService.FlattenTrack(track);
+        AppendLog($"Flattened track '{track.Name}'.");
+        recovery.MarkDirty();
+        RefreshAll();
+    }
+
+    private void RunRenderEdit(string operation, Action action)
+    {
+        if (engine.IsPlaying) StopPlayback();
+        try
+        {
+            Cursor = Cursors.WaitCursor;
+            SetStatus(operation + " rendering…");
+            action();
+            recovery.MarkDirty();
+            AppendLog(operation + " complete.");
+            SetStatus(operation + " complete");
+            RefreshAll();
+        }
+        catch (Exception ex)
+        {
+            AppendLog(operation + " failed: " + ex.Message);
+            MessageBox.Show(this, ex.Message, operation, MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        finally { Cursor = Cursors.Default; }
+    }
+
     private void SetTempo()
     {
         var value = Prompt.Show("Tempo BPM", project.Tempo.ToString("0.##"));
-        if (double.TryParse(value, out var bpm)) { project.Tempo = Math.Clamp(bpm, 40, 220); RefreshAll(); }
+        if (double.TryParse(value, out var bpm)) { project.Tempo = Math.Clamp(bpm, 40, 220); recovery.MarkDirty(); RefreshAll(); }
     }
 
     private void SetKey()
     {
         var value = Prompt.Show("Project key", project.Key);
-        if (!string.IsNullOrWhiteSpace(value)) { project.Key = value; RefreshAll(); }
+        if (!string.IsNullOrWhiteSpace(value)) { project.Key = value; recovery.MarkDirty(); RefreshAll(); }
     }
 
     private void EditAutomationPoint()
@@ -594,6 +785,7 @@ public sealed class MainForm : Form
         if (lane.Kind == AutomationTargetKind.DeviceOn) value = value >= 0.5 ? 1 : 0;
         lane.Points.Add(new AutomationPoint(Math.Max(0, beat), value));
         lane.Points = lane.Points.OrderBy(p => p.Beat).ToList();
+        recovery.MarkDirty();
         RefreshAutomation();
     }
 
@@ -601,19 +793,28 @@ public sealed class MainForm : Form
     {
         if (automationList.SelectedItems.Count == 0 || automationList.SelectedItems[0].Tag is not AutomationLane lane || lane.Points.Count == 0) return;
         lane.Points.RemoveAt(lane.Points.Count - 1);
+        recovery.MarkDirty();
         RefreshAutomation();
     }
 
-    protected override void OnFormClosed(FormClosedEventArgs e)
+    protected override void OnFormClosing(FormClosingEventArgs e)
     {
+        if (!ConfirmDiscardUnsaved()) { e.Cancel = true; return; }
+        autosaveTimer.Stop();
         engine.Dispose();
         scanCts?.Cancel();
-        base.OnFormClosed(e);
+        Vst3NativeHostBridge.Shared.Dispose();
+        base.OnFormClosing(e);
     }
 
     private void SetStatus(string message) => statusLabel.Text = message;
     private void AppendLog(string message)
     {
+        lock (recentLogs)
+        {
+            recentLogs.Add($"[{DateTime.Now:O}] {message}");
+            if (recentLogs.Count > 5000) recentLogs.RemoveRange(0, recentLogs.Count - 5000);
+        }
         void Append() => logBox.AppendText($"[{DateTime.Now:HH:mm:ss}] {message}{Environment.NewLine}");
         if (IsHandleCreated) BeginInvoke((Action)Append);
         else Append();

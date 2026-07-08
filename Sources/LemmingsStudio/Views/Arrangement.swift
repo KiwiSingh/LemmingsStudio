@@ -662,7 +662,26 @@ struct ArrangementView: View {
                 }
                 stemSplitDialogClip = clip
             }
-            Button("Replicate Sonic Signature…") { app.askAIToReplicateSonicSignature(from: clip, target: app.selectedTrack?.pluginTargetID ?? "Built-in Analog") }
+            Menu("Replicate Sonic Signature…") {
+                Button("Use Stock Analog") {
+                    Task { await app.replicateSonicSignature(from: clip, targetPluginName: nil) }
+                }
+                Menu("Use Third-Party Instrument") {
+                    ForEach(KnownPlugins.synths.filter { $0.name != "Built-in Analog" }) { synth in
+                        Button(synth.name) {
+                            Task { await app.replicateSonicSignature(from: clip, targetPluginName: synth.name) }
+                        }
+                    }
+                    if !app.discoveredPlugins.filter({ $0.role == .instrument }).isEmpty {
+                        Divider()
+                        ForEach(app.discoveredPlugins.filter { $0.role == .instrument }) { plugin in
+                            Button(plugin.name) {
+                                Task { await app.replicateSonicSignature(from: clip, targetPluginName: plugin.name) }
+                            }
+                        }
+                    }
+                }
+            }
         }
         .gesture(clipDragGesture(id: clip.id, currentStart: clip.startBeat, sourceTrack: track, kind: .audio) { clip.startBeat = $0 })
     }

@@ -58,6 +58,36 @@ public enum OllamaCatalog {
     public static var recommendedForThisMac: OllamaModel { recommended(forRAMBytes: systemRAMBytes) }
 }
 
+/// Dedicated chat-tuned Ollama models. These are intentionally separate from the
+/// multimodal/abliterated Sound Agent catalog so normal production Q&A gets a
+/// conversational model with lower latency and cleaner prose.
+public enum OllamaChatCatalog {
+    public static let all: [OllamaModel] = [
+        OllamaModel(tag: "qwen3:1.7b",
+                    label: "Qwen3 1.7B · chat · lightweight",
+                    approxDownloadGB: 1.4, minRAMGB: 6, multimodal: false, uncensored: false),
+        OllamaModel(tag: "qwen3:4b",
+                    label: "Qwen3 4B · chat · balanced",
+                    approxDownloadGB: 2.6, minRAMGB: 8, multimodal: false, uncensored: false),
+        OllamaModel(tag: "qwen3:8b",
+                    label: "Qwen3 8B · chat · recommended",
+                    approxDownloadGB: 5.2, minRAMGB: 16, multimodal: false, uncensored: false),
+        OllamaModel(tag: "qwen3:14b",
+                    label: "Qwen3 14B · chat · high quality",
+                    approxDownloadGB: 9.3, minRAMGB: 32, multimodal: false, uncensored: false),
+    ]
+
+    public static func recommended(forRAMBytes ram: UInt64) -> OllamaModel {
+        let gb = Double(ram) / 1_073_741_824.0
+        if gb < 8 { return all[0] }
+        if gb < 16 { return all[1] }
+        if gb < 32 { return all[2] }
+        return all[3]
+    }
+
+    public static var recommendedForThisMac: OllamaModel { recommended(forRAMBytes: ProcessInfo.processInfo.physicalMemory) }
+}
+
 // MARK: Errors / progress
 
 public enum OllamaError: LocalizedError {

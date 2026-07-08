@@ -3,7 +3,7 @@ param(
     [string]$Backend = "directml",
     [ValidateSet("win-x64", "win-arm64")]
     [string]$Runtime = "win-x64",
-    [string]$Version = "1.1.0",
+    [string]$Version = "2.0.0",
     [string]$Configuration = "Release",
     [switch]$PreloadModels,
     [switch]$SkipInstaller,
@@ -391,6 +391,15 @@ elseif ($PreloadModels) {
         $modelFiles = Get-ChildItem -Path $torchModelCache -Recurse -File -ErrorAction SilentlyContinue | Measure-Object
         Write-Host "Bundled Demucs/PyTorch model cache: $($modelFiles.Count) file(s) under $torchModelCache"
     }
+}
+
+Step "Running release sanity checks"
+$sanityScript = Join-Path $winRoot "scripts\test-release-sanity.ps1"
+if (Test-Path $sanityScript) {
+    & $sanityScript -PublishDir $publishDir -RequireNativeVst3Host:$RequireNativeVst3Host
+    if ($LASTEXITCODE -ne 0) { throw "Release sanity checks failed." }
+} else {
+    Warn "Release sanity script missing: $sanityScript"
 }
 
 if ($SkipInstaller) {

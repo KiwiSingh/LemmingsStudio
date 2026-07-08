@@ -27,13 +27,17 @@ public sealed class Vst3NativeHostBridge : IDisposable
     private StreamWriter? stdin;
     private string? lastError;
     private readonly HashSet<Guid> hydratedSlots = new();
+    private int crashCount;
+    private bool intentionalShutdown;
 
     public event Action<string>? Log;
+    public event Action? HostCrashed;
 
     public bool IsAvailable => File.Exists(ResolveHostPath());
     public bool IsRunning => process is { HasExited: false };
     public string HostPath => ResolveHostPath();
     public string LastError => lastError ?? "";
+    public int CrashCount => crashCount;
 
     public string StatusText
     {
@@ -75,12 +79,23 @@ public sealed class Vst3NativeHostBridge : IDisposable
                 };
                 process.OutputDataReceived += (_, e) => { if (!string.IsNullOrWhiteSpace(e.Data)) HandleHostLine(e.Data); };
                 process.ErrorDataReceived += (_, e) => { if (!string.IsNullOrWhiteSpace(e.Data)) Log?.Invoke("VST3 host err: " + e.Data); };
+                intentionalShutdown = false;
                 process.Exited += (_, _) =>
                 {
-                    Log?.Invoke("Native VST3 host exited.");
+                    var crashed = !intentionalShutdown;
+                    if (crashed) crashCount++;
+                    lastError = crashed ? "Native VST3 host exited unexpectedly." : lastError;
+                    Log?.Invoke(crashed ? $"Native VST3 host crashed/exited unexpectedly (count {crashCount}). It can be restarted safely." : "Native VST3 host exited.");
                     foreach (var kv in pending)
                         kv.Value.TrySetException(new IOException("Native VST3 host exited."));
                     pending.Clear();
+                    hydratedSlots.Clear();
+                    lock (gate)
+                    {
+                        try { stdin?.Dispose(); } catch { }
+                        stdin = null;
+                    }
+                    if (crashed) HostCrashed?.Invoke();
                 };
                 process.Start();
                 process.BeginOutputReadLine();
@@ -97,6 +112,24 @@ public sealed class Vst3NativeHostBridge : IDisposable
                 return false;
             }
         }
+    }
+
+
+    public bool Restart(IWin32Window? owner = null)
+    {
+        lock (gate)
+        {
+            intentionalShutdown = true;
+            try { Send(new { op = "quit" }); } catch { }
+            try { stdin?.Dispose(); } catch { }
+            try { if (process is { HasExited: false }) process.Kill(entireProcessTree: true); } catch { }
+            try { process?.Dispose(); } catch { }
+            process = null;
+            stdin = null;
+            hydratedSlots.Clear();
+            pending.Clear();
+        }
+        return EnsureStarted(owner);
     }
 
     public bool TryLoad(DeviceSlot slot, IWin32Window? owner = null)
@@ -555,6 +588,7 @@ public sealed class Vst3NativeHostBridge : IDisposable
     {
         lock (gate)
         {
+            intentionalShutdown = true;
             try { Send(new { op = "quit" }); } catch { }
             try { stdin?.Dispose(); } catch { }
             try { if (process is { HasExited: false }) process.Kill(entireProcessTree: true); } catch { }

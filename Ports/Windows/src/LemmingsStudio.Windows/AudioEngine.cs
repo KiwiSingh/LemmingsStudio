@@ -27,6 +27,21 @@ public sealed class AudioEngine : IDisposable
 
     public event Action<string>? Log;
     public event Action? PlaybackStopped;
+    public readonly record struct MeterState(float Peak, float Rms, float HoldPeak, bool Clipped);
+    public Dictionary<string, MeterState> LastMeters { get; } = new();
+    private readonly Dictionary<string, float> _meterHold = new();
+    private readonly HashSet<string> _meterClipped = new();
+
+    public void ResetClipIndicators()
+    {
+        _meterClipped.Clear();
+        _meterHold.Clear();
+        foreach (var key in LastMeters.Keys.ToList())
+        {
+            var m = LastMeters[key];
+            LastMeters[key] = m with { HoldPeak = m.Peak, Clipped = false };
+        }
+    }
 
     private WaveOutEvent? _output;
     private FloatBufferSampleProvider? _provider;
@@ -40,100 +55,198 @@ public sealed class AudioEngine : IDisposable
     /// <summary>Beats → seconds at a fixed tempo.</summary>
     private static double BeatsToSeconds(double beats, double tempo) => beats * 60.0 / Math.Max(1.0, tempo);
 
-    /// <summary>Render the whole project to an interleaved stereo float buffer.</summary>
+    /// <summary>Render the project with per-track buffers, post-fader sends, return buses and master stage.</summary>
     public float[] Render(StudioProject project)
     {
         double tempo = project.Tempo <= 0 ? 120 : project.Tempo;
-
         double maxBeat = 4;
         foreach (var t in project.Tracks)
         {
-            foreach (var c in t.Clips)
-                maxBeat = Math.Max(maxBeat, c.StartBeat + Math.Max(0.25, c.LengthBeats));
+            foreach (var c in t.Clips) maxBeat = Math.Max(maxBeat, c.StartBeat + Math.Max(0.25, c.LengthBeats));
             if (t.UseStepSequencer && t.StepPattern.Hits.Count > 0)
                 maxBeat = Math.Max(maxBeat, Math.Max(4.0, t.StepPattern.StepCount / (double)Math.Max(1, t.StepPattern.StepsPerBeat)));
         }
 
-        // One extra second of tail so the last note/clip release isn't clipped.
         int totalFrames = (int)Math.Ceiling(BeatsToSeconds(maxBeat, tempo) * SampleRate) + SampleRate;
-        var mix = new float[totalFrames * Channels];
+        var master = new float[totalFrames * Channels];
+        var returnInputs = project.ReturnBuses.ToDictionary(b => b.Id, _ => new float[totalFrames * Channels]);
+        bool anyTrackSolo = project.Tracks.Any(t => t.Solo);
+        bool anyReturnSolo = project.ReturnBuses.Any(b => b.Solo);
 
-        bool anySolo = project.Tracks.Any(t => t.Solo);
+        LastMeters.Clear();
 
         foreach (var track in project.Tracks)
         {
-            if (track.Muted) continue;
-            if (anySolo && !track.Solo) continue;
+            if (track.Muted) { UpdateMeter("track:" + track.Id, Array.Empty<float>()); continue; }
+            if (anyTrackSolo && !track.Solo) { UpdateMeter("track:" + track.Id, Array.Empty<float>()); continue; }
 
-            // Equal-power pan, with the track volume baked into each side.
-            float vol = Math.Clamp(track.Volume, 0f, 1f);
-            double panAngle = (Math.Clamp(track.Pan, -1f, 1f) + 1.0) * Math.PI / 4.0;
-            float gainL = vol * (float)Math.Cos(panAngle);
-            float gainR = vol * (float)Math.Sin(panAngle);
+            var trackBuffer = RenderTrackBuffer(track, tempo, totalFrames);
+            ApplyTrackFaderAndPan(trackBuffer, track.Volume, track.Pan);
+            UpdateMeter("track:" + track.Id, trackBuffer);
 
-            if (track.UseStepSequencer && track.StepPattern.Hits.Count > 0)
+            // Direct output routing: Master by default, or route the full post-fader signal to a return bus.
+            if (track.OutputBusId is Guid outputBus && returnInputs.TryGetValue(outputBus, out var routedBus))
+                MixInto(routedBus, totalFrames, trackBuffer, 0, 1f, 1f);
+            else
+                MixInto(master, totalFrames, trackBuffer, 0, 1f, 1f);
+
+            // buildfix244: post-fader sends feed independent return-bus buffers.
+            foreach (var send in track.Sends)
             {
-                try
-                {
-                    var patternClip = StepSequencerPanel.BuildMidiClipFromPattern(track, track.Name + " Pattern", 0);
-                    ApplyDeviceAutomation(track, 0);
-                    var stepStereo = ApplyDeviceChain(RenderMidiClip(patternClip, track, tempo), track, patternClip.StartBeat, tempo);
-                    MixInto(mix, totalFrames, stepStereo, 0, gainL, gainR);
-                }
-                catch (Exception ex)
-                {
-                    Log?.Invoke($"Render skipped step sequencer on '{track.Name}': {ex.Message}");
-                }
-            }
-
-            foreach (var clip in track.Clips)
-            {
-                int startFrame = (int)Math.Round(BeatsToSeconds(clip.StartBeat, tempo) * SampleRate);
-                if (startFrame < 0) startFrame = 0;
-
-                try
-                {
-                    float[]? clipStereo = null;
-                    if (clip.Type == ClipType.Audio && !string.IsNullOrWhiteSpace(clip.SourcePath) && File.Exists(clip.SourcePath))
-                    {
-                        clipStereo = DecodeToStereo(clip.SourcePath!);
-                        double stretch = (clip.WarpEnabled && clip.SourceTempo > 0) ? clip.SourceTempo / tempo : 1.0;
-                        if (Math.Abs(stretch - 1.0) > 0.001)
-                            clipStereo = ResampleInterleavedStereo(clipStereo, stretch);
-                    }
-                    else if (clip.Type == ClipType.Midi && clip.Notes.Count > 0)
-                    {
-                        clipStereo = RenderMidiClip(clip, track, tempo);
-                    }
-
-                    if (clipStereo != null)
-                    {
-                        // Apply device automation at the clip start before rendering the
-                        // track's device chain. For VST3 this sends normalized parameters
-                        // into the native helper; stock effects read from the same dictionary.
-                        ApplyDeviceAutomation(track, clip.StartBeat);
-                        clipStereo = ApplyDeviceChain(clipStereo, track, clip.StartBeat, tempo);
-                        var clipGain = (float)Math.Clamp(clip.Gain, 0.0, 4.0);
-                        MixInto(mix, totalFrames, clipStereo, startFrame, gainL * clipGain, gainR * clipGain);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Log?.Invoke($"Render skipped clip '{clip.Name}': {ex.Message}");
-                }
+                if (send.Value <= 0 || !returnInputs.TryGetValue(send.Key, out var busBuffer)) continue;
+                float amount = Math.Clamp(send.Value, 0f, 1.5f);
+                MixInto(busBuffer, totalFrames, trackBuffer, 0, amount, amount);
             }
         }
 
+        foreach (var bus in project.ReturnBuses)
+        {
+            if (!returnInputs.TryGetValue(bus.Id, out var input)) continue;
+            if (bus.Muted || (anyReturnSolo && !bus.Solo))
+            {
+                UpdateMeter("return:" + bus.Id, Array.Empty<float>());
+                continue;
+            }
+
+            var pseudoTrack = new Track
+            {
+                Name = bus.Name,
+                Type = TrackType.Bus,
+                Devices = bus.Devices,
+                Automation = bus.Automation
+            };
+            var processed = ApplyDeviceChain(input, pseudoTrack, 0, tempo);
+            ApplyTrackFaderAndPan(processed, bus.Volume, bus.Pan);
+            UpdateMeter("return:" + bus.Id, processed);
+            MixInto(master, totalFrames, processed, 0, 1f, 1f);
+        }
+
         if (project.MetronomeEnabled)
-            RenderMetronome(mix, totalFrames, maxBeat, tempo, Math.Max(1, project.BeatsPerBar));
+            RenderMetronome(master, totalFrames, maxBeat, tempo, Math.Max(1, project.BeatsPerBar));
 
-        // Final safety limiter: hard-clamp to [-1, 1].
-        for (int i = 0; i < mix.Length; i++)
-            mix[i] = Math.Clamp(mix[i], -1f, 1f);
+        float masterGain = project.MasterMuted ? 0f : Math.Clamp(project.MasterVolume, 0f, 1.25f);
+        for (int i = 0; i < master.Length; i++) master[i] *= masterGain;
+        UpdateMeter("master", master);
 
-        return mix;
+        // Safety clamp after metering so CLIP indicators still report overs.
+        for (int i = 0; i < master.Length; i++) master[i] = Math.Clamp(master[i], -1f, 1f);
+        return master;
     }
 
+    private float[] RenderTrackBuffer(Track track, double tempo, int totalFrames)
+    {
+        var output = new float[totalFrames * Channels];
+
+        if (track.UseStepSequencer && track.StepPattern.Hits.Count > 0)
+        {
+            try
+            {
+                ApplyDeviceAutomation(track, 0);
+                var stepStereo = ApplyDeviceChain(RenderStepSequencerTrack(track, tempo), track, 0, tempo);
+                MixInto(output, totalFrames, stepStereo, 0, 1f, 1f);
+            }
+            catch (Exception ex) { Log?.Invoke($"Render skipped step sequencer on '{track.Name}': {ex.Message}"); }
+        }
+
+        foreach (var clip in track.Clips)
+        {
+            int startFrame = Math.Max(0, (int)Math.Round(BeatsToSeconds(clip.StartBeat, tempo) * SampleRate));
+            try
+            {
+                float[]? clipStereo = null;
+                if (clip.Type == ClipType.Audio && !string.IsNullOrWhiteSpace(clip.SourcePath) && File.Exists(clip.SourcePath))
+                {
+                    clipStereo = DecodeToStereo(clip.SourcePath!);
+                    double stretch = (clip.WarpEnabled && clip.SourceTempo > 0) ? clip.SourceTempo / tempo : 1.0;
+                    if (Math.Abs(stretch - 1.0) > 0.001) clipStereo = ResampleInterleavedStereo(clipStereo, stretch);
+                    int offsetFrames = Math.Max(0, (int)Math.Round(BeatsToSeconds(clip.SourceOffsetBeats, tempo) * SampleRate));
+                    int wantedFrames = Math.Max(1, (int)Math.Round(BeatsToSeconds(clip.LengthBeats, tempo) * SampleRate));
+                    clipStereo = SliceInterleavedStereo(clipStereo, offsetFrames, wantedFrames);
+                }
+                else if (clip.Type == ClipType.Midi && clip.Notes.Count > 0)
+                    clipStereo = RenderMidiClip(clip, track, tempo);
+
+                if (clipStereo == null) continue;
+                ApplyDeviceAutomation(track, clip.StartBeat);
+                clipStereo = ApplyDeviceChain(clipStereo, track, clip.StartBeat, tempo);
+                float clipGain = (float)Math.Clamp(clip.Gain, 0.0, 4.0);
+                MixInto(output, totalFrames, clipStereo, startFrame, clipGain, clipGain);
+            }
+            catch (Exception ex) { Log?.Invoke($"Render skipped clip '{clip.Name}': {ex.Message}"); }
+        }
+        return output;
+    }
+
+    private static void ApplyTrackFaderAndPan(float[] stereo, float volume, float pan)
+    {
+        float vol = Math.Clamp(volume, 0f, 1.25f);
+        double angle = (Math.Clamp(pan, -1f, 1f) + 1.0) * Math.PI / 4.0;
+        float gl = vol * (float)Math.Cos(angle);
+        float gr = vol * (float)Math.Sin(angle);
+        for (int i = 0; i + 1 < stereo.Length; i += 2)
+        {
+            stereo[i] *= gl;
+            stereo[i + 1] *= gr;
+        }
+    }
+
+    private void UpdateMeter(string key, float[] stereo)
+    {
+        float peak = 0f;
+        double sum = 0;
+        if (stereo.Length > 0)
+        {
+            foreach (var v in stereo)
+            {
+                float a = Math.Abs(v);
+                if (a > peak) peak = a;
+                sum += v * v;
+            }
+        }
+        float rms = stereo.Length == 0 ? 0f : (float)Math.Sqrt(sum / stereo.Length);
+        float hold = Math.Max(peak, _meterHold.TryGetValue(key, out var old) ? old * 0.985f : 0f);
+        _meterHold[key] = hold;
+        if (peak >= 1f) _meterClipped.Add(key);
+        LastMeters[key] = new MeterState(peak, rms, hold, _meterClipped.Contains(key));
+    }
+
+    private static float[] RenderStepSequencerTrack(Track track, double tempo)
+    {
+        var pattern = track.StepPattern;
+        double stepBeats = 1.0 / Math.Max(1, pattern.StepsPerBeat);
+        double patternBeats = Math.Max(stepBeats, pattern.StepCount * stepBeats);
+        int totalFrames = (int)Math.Ceiling(BeatsToSeconds(patternBeats, tempo) * SampleRate) + SampleRate;
+        var output = new float[totalFrames * Channels];
+
+        // Preserve synth/drum-machine playback for lanes without a sample path.
+        var midiClip = new ProjectClip { Type = ClipType.Midi, Name = track.Name + " Pattern", StartBeat = 0, LengthBeats = patternBeats };
+        foreach (var hit in pattern.Hits.OrderBy(h => h.Step))
+        {
+            var layer = track.SequencerLayers.FirstOrDefault(l => l.Note == hit.Note);
+            if (layer != null && !string.IsNullOrWhiteSpace(layer.SourcePath) && File.Exists(layer.SourcePath))
+            {
+                var sample = DecodeToStereo(layer.SourcePath);
+                int startFrame = (int)Math.Round(BeatsToSeconds(hit.Step * stepBeats, tempo) * SampleRate);
+                float layerVol = (float)Math.Clamp(layer.Volume, 0.0, 4.0);
+                double panAngle = (Math.Clamp(layer.Pan, -1.0, 1.0) + 1.0) * Math.PI / 4.0;
+                float left = layerVol * (float)Math.Cos(panAngle);
+                float right = layerVol * (float)Math.Sin(panAngle);
+                MixInto(output, totalFrames, sample, startFrame, left, right);
+            }
+            else
+            {
+                int octave = layer?.OctaveOffset ?? 0;
+                midiClip.Notes.Add(new MidiNote(hit.Step * stepBeats, Math.Min(stepBeats * 0.9, 0.24), hit.Note + octave * 12, hit.Velocity));
+            }
+        }
+
+        if (midiClip.Notes.Count > 0)
+        {
+            var synth = RenderMidiClip(midiClip, track, tempo);
+            MixInto(output, totalFrames, synth, 0, 1f, 1f);
+        }
+        return output;
+    }
 
     private static void ApplyDeviceAutomation(Track track, double beat)
     {
@@ -447,6 +560,18 @@ public sealed class AudioEngine : IDisposable
             stereo[f * 2 + 1] = r;
         }
         return stereo;
+    }
+
+
+    private static float[] SliceInterleavedStereo(float[] input, int offsetFrames, int wantedFrames)
+    {
+        int totalFrames = input.Length / Channels;
+        int start = Math.Clamp(offsetFrames, 0, totalFrames);
+        int frames = Math.Clamp(wantedFrames, 0, totalFrames - start);
+        if (frames <= 0) return Array.Empty<float>();
+        var output = new float[frames * Channels];
+        Array.Copy(input, start * Channels, output, 0, output.Length);
+        return output;
     }
 
     /// <summary>Naive linear-interpolation time-stretch (changes pitch; placeholder for real warping).</summary>
@@ -769,13 +894,22 @@ public sealed class AudioEngine : IDisposable
     {
         Stop();
         float[] mix = Render(project);
-        _provider = new FloatBufferSampleProvider(mix, SampleRate, Channels);
+        _provider = new FloatBufferSampleProvider(mix, SampleRate, Channels, (peak, rms) => UpdatePlaybackMasterMeter(peak, rms));
         _output = new WaveOutEvent { DesiredLatency = Math.Clamp(OutputLatencyMs, 30, 500) };
         _output.PlaybackStopped += OnPlaybackStopped;
         _output.Init(_provider);
         _output.Play();
         IsPlaying = true;
         Log?.Invoke($"Playback started — {mix.Length / Channels / (double)SampleRate:0.0}s rendered.");
+    }
+
+    private void UpdatePlaybackMasterMeter(float peak, float rms)
+    {
+        const string key = "master";
+        float hold = Math.Max(peak, _meterHold.TryGetValue(key, out var old) ? old * 0.96f : 0f);
+        _meterHold[key] = hold;
+        if (peak >= 1f) _meterClipped.Add(key);
+        LastMeters[key] = new MeterState(peak, rms, hold, _meterClipped.Contains(key));
     }
 
     public void Stop()
@@ -965,12 +1099,14 @@ public static class FfmpegLocator
 public sealed class FloatBufferSampleProvider : ISampleProvider
 {
     private readonly float[] _buffer;
+    private readonly Action<float, float>? _meterCallback;
     public long Position { get; set; }
     public WaveFormat WaveFormat { get; }
 
-    public FloatBufferSampleProvider(float[] interleaved, int sampleRate, int channels)
+    public FloatBufferSampleProvider(float[] interleaved, int sampleRate, int channels, Action<float, float>? meterCallback = null)
     {
         _buffer = interleaved;
+        _meterCallback = meterCallback;
         WaveFormat = WaveFormat.CreateIeeeFloatWaveFormat(sampleRate, channels);
     }
 
@@ -980,6 +1116,12 @@ public sealed class FloatBufferSampleProvider : ISampleProvider
         if (remaining <= 0) return 0;
         int n = (int)Math.Min(count, remaining);
         Array.Copy(_buffer, Position, buffer, offset, n);
+        if (_meterCallback != null && n > 0)
+        {
+            float peak = 0f; double sum = 0;
+            for (int i = 0; i < n; i++) { float v = buffer[offset + i]; float a = Math.Abs(v); if (a > peak) peak = a; sum += v * v; }
+            _meterCallback(peak, (float)Math.Sqrt(sum / n));
+        }
         Position += n;
         return n;
     }

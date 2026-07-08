@@ -170,6 +170,7 @@ struct LemmingsStudioApp: App {
                 .onAppear {
                     appState.engine.start()
                     appState.rebuildTempoMap()
+                    DesktopPluginBridgeServer.shared.start()
                     StartupSound.shared.play()
                 }
                 .onOpenURL { url in
@@ -200,6 +201,12 @@ struct LemmingsStudioApp: App {
                 }
                 Button("Export WAV…") { appState.export(format: .wav) }
                     .keyboardShortcut("e", modifiers: [.command, .shift])
+            }
+            CommandMenu("Host Mode") {
+                Button("Start Integrated Host Mode") { DesktopPluginBridgeServer.shared.start() }
+                Button("Stop Integrated Host Mode") { DesktopPluginBridgeServer.shared.stop() }
+                Divider()
+                Button("Show Host Mode Status & Pairing Code") { DesktopPluginBridgeServer.shared.showHostModeStatus() }
             }
             CommandMenu("Export") {
                 ForEach(ExportFormat.allCases) { fmt in
@@ -1023,6 +1030,22 @@ private struct UserLibraryFileCandidate: Sendable {
             }
             let client = OllamaClient(modelsDirectory: (dir?.isEmpty == false) ? dir : nil)
             return .ollama(client: client, model: tag)
+        }
+    }
+
+    /// General Chat deliberately uses a chat-tuned model separate from the
+    /// multimodal/agentic model used by Sound Agent and AI Producer.
+    func currentChatBackend() -> LLMBackend {
+        switch aiBackend {
+        case .claude:
+            let key = claudeAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            return key.isEmpty ? .offline : .claude(apiKey: key)
+        case .ollama:
+            let dir = UserDefaults.standard.string(forKey: "ollamaModelsDir")?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let storedTag = UserDefaults.standard.string(forKey: "ollamaChatModelTag")?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let tag = (storedTag?.isEmpty == false) ? storedTag! : OllamaChatCatalog.recommendedForThisMac.tag
+            if storedTag?.isEmpty != false { UserDefaults.standard.set(tag, forKey: "ollamaChatModelTag") }
+            return .ollama(client: OllamaClient(modelsDirectory: (dir?.isEmpty == false) ? dir : nil), model: tag)
         }
     }
 
@@ -1954,7 +1977,7 @@ private struct UserLibraryFileCandidate: Sendable {
     func runGeneralChat(_ prompt: String) async {
         let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        let backend = currentBackend()
+        let backend = currentChatBackend()
         let pendingID = UUID()
         await MainActor.run {
             generalChatLog.append(GeneralChatMessage(role: "You", text: trimmed))
@@ -1969,10 +1992,13 @@ private struct UserLibraryFileCandidate: Sendable {
             generalChatLog.append(GeneralChatMessage(id: pendingID, role: "AI", text: "Thinking…"))
         }
         let system = """
-        You are the general chat assistant inside LemmingsStudio. Answer conversationally and practically.
-        You may help with music theory, mashup key planning, arrangement, mixing, mastering, DAW workflow,
-        software troubleshooting, and general creative questions. Do not emit project edit JSON unless the
-        user explicitly asks to modify the project; this chat is for normal answers.
+        You are the general music-production chat assistant inside LemmingsStudio. Answer conversationally,
+        practically, and with enough technical detail to be useful in a real studio session. You may help with
+        music theory, harmony, chord progressions, synthesis, sound design, plugin choices, MIDI, recording,
+        arrangement, mixing, mastering, acoustics, loudness, workflow, troubleshooting, and production history.
+        Ask for missing context only when it materially changes the recommendation. Prefer actionable settings,
+        ranges, signal-chain order, and listening tests over vague advice. Do not emit project-edit JSON unless
+        the user explicitly asks to modify the project; this chat is for normal conversation and guidance.
         """
         let projectContext = AIAssistant.projectSummary(project)
         let recent = generalChatLog.suffix(10).map { "\($0.role): \($0.text)" }.joined(separator: "\n")
@@ -5654,11 +5680,47 @@ private struct UserLibraryFileCandidate: Sendable {
         editStatus = "Prepared audio print target for ‘\(track.name)’"
     }
 
-    func askAIToReplicateSonicSignature(from clip: AudioClip, target: String) {
-        let hint = clip.detectedTempo.map { "Detected tempo: \(Int($0)) BPM." } ?? "Tempo unknown."
-        audioSignatureStatus = "Analysing ‘\(clip.displayName)’ for \(target)…"
-        assistantLog.append("audio-signature: analyse ‘\(clip.displayName)’ and recreate it on \(target). \(hint) Use an audio-capable model if local Ollama text model is insufficient; otherwise approximate via spectrum/envelope/transient descriptors.")
-        assistantLog.append("audio-signature: recommended backend — Qwen2-Audio / CLAP-style embedding for analysis, then map to Analog/Serum/plugin parameters.")
+    @MainActor
+    func replicateSonicSignature(from clip: AudioClip, targetPluginName: String?) async {
+        let requestedTarget = targetPluginName ?? "Built-in Analog"
+        guard let track = selectedTrack else {
+            audioSignatureStatus = "Select an instrument track before replicating a sonic signature."
+            return
+        }
+        track.pluginTargetID = requestedTarget
+        audioSignatureStatus = "Analysing ‘\(clip.displayName)’ for \(requestedTarget)…"
+
+        guard let target = prepareSoundAgentTarget(resetForNewPatch: true) else {
+            audioSignatureStatus = "Could not prepare \(requestedTarget) as a writable target."
+            assistantLog.append("⚠️ audio-signature: target unavailable — \(requestedTarget)")
+            return
+        }
+
+        let tempoHint = clip.detectedTempo.map { "Detected tempo: \(Int($0)) BPM." } ?? "Tempo unknown."
+        let prompt = """
+        Replicate the sonic signature of the reference audio clip “\(clip.displayName)” on \(target.displayName).
+        \(tempoHint) Clip length: \(String(format: "%.2f", clip.lengthBeats)) beats.
+
+        Recreate the perceived timbre, envelope, brightness, harmonic density, stereo character, transient shape,
+        movement, and FX character as closely as the available target allows. Set every parameter you can actually
+        access through the host. For any important knob, mode, wavetable, routing switch, matrix assignment, FX
+        setting, or modulation connection that the host cannot access or map reliably, DO NOT pretend it was changed.
+        Put explicit manual instructions in the notes: exact control name/path, direction or approximate value/range,
+        and the listening goal. Keep those instructions concise and ordered so the user can finish the patch by hand.
+        """
+
+        let design = await SoundAgent(backend: currentBackend()).design(description: prompt, for: target)
+        do {
+            let summary = try target.apply(design)
+            audioSignatureStatus = "Replicated ‘\(clip.displayName)’ on \(target.displayName)."
+            assistantLog.append("audio-signature: \(summary)")
+            if !design.notes.isEmpty {
+                assistantLog.append("audio-signature manual/agent notes: \(design.notes)")
+            }
+        } catch {
+            audioSignatureStatus = "Sonic-signature replication failed: \(error.localizedDescription)"
+            assistantLog.append("⚠️ audio-signature: \(error.localizedDescription)")
+        }
     }
 
     func bootstrapHomebrewAndOllama() {

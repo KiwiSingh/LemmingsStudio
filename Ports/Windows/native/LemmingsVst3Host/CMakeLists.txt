@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(LemmingsVst3Host VERSION 1.1.0 LANGUAGES CXX)
+project(LemmingsVst3Host VERSION 2.0.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -23,7 +23,7 @@ endif()
 
 juce_add_console_app(LemmingsVst3Host
     PRODUCT_NAME "LemmingsVst3Host"
-    VERSION "1.1.0"
+    VERSION "2.0.0"
     COMPANY_NAME "MagmaVance LLC"
 )
 

@@ -1,0 +1,13 @@
+{
+  "images" : [
+    {
+      "filename" : "Back.png",
+      "idiom" : "universal",
+      "scale" : "1x"
+    }
+  ],
+  "info" : {
+    "author" : "com.magmavance.LemmingsStudioVision",
+    "version" : 1
+  }
+}

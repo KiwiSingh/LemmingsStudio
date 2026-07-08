@@ -41,7 +41,8 @@ public sealed class SoundAgent
                 "Translate the FULL request into concrete parameter values. Use ONLY these normalized " +
                 $"0..1 control names: {paramList}. Reply with ONLY JSON: " +
                 "{\"presetName\": string, \"notes\": string, \"params\": {\"<name>\": number, ...}}. " +
-                "presetName should be a short patch name like \"80s Synthwave Pluck\", not the prompt text.";
+                "presetName should be a short patch name like \"80s Synthwave Pluck\", not the prompt text. " +
+                "Never claim you changed a control the host cannot access. Put manual completion steps for inaccessible knobs/modes/routing/modulation/FX in notes, with exact control path, direction or approximate value/range, and listening goal.";
 
             string text = await _client.GenerateAsync(model, system, description, token);
             if (TryParse(text, target, out var name, out var notes, out var modelParams))

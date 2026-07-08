@@ -1,7 +1,7 @@
 #define MyAppName "LemmingsStudio"
 #define MyAppPublisher "MagmaVance LLC"
 #ifndef AppVersion
-  #define AppVersion "1.1.0"
+  #define AppVersion "2.0.0"
 #endif
 #ifndef Backend
   #define Backend "directml"
@@ -33,7 +33,7 @@ ArchitecturesAllowed=x64compatible arm64
 ArchitecturesInstallIn64BitMode=x64compatible arm64
 PrivilegesRequired=lowest
 UninstallDisplayIcon={app}\LemmingsStudio.exe
-VersionInfoVersion=1.1.0.0
+VersionInfoVersion=2.0.0.0
 VersionInfoCompany=MagmaVance LLC
 VersionInfoDescription=LemmingsStudio Windows beta installer
 VersionInfoProductName=LemmingsStudio
