@@ -1,0 +1,6 @@
+# Local native development artifacts
+native-build/
+NativeStudio/build/
+__pycache__/
+*.pyc
+.DS_Store

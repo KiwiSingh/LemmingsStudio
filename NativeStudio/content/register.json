@@ -1,0 +1,83 @@
+{
+  "schema": 1,
+  "baselineDate": "2026-10-26",
+  "policy": "Code approvals and content approvals are independent. Candidate assets are not packaged. A Git revision identifies upstream content; release archives require SHA-256 checksums too.",
+  "entries": [
+    {
+      "id": "lemmings-baseline",
+      "source": "https://github.com/KiwiSingh/LemmingsStudio",
+      "revision": "4a2c0cf1b137e21152fa9d8cf9844f2c5ec777fc",
+      "license": "GPL-3.0",
+      "attribution": "MagmaVance LLC and contributors",
+      "approval": "source-baseline",
+      "checksum": "fb25f4ba2c2e72a7ba1474ad35593635da375be7821fabd26001c7e1d36768ef",
+      "redistributionBasis": "Repository LICENSE; full dependency audit pending",
+      "checksumKind": "SHA-256 of git archive HEAD (tar), unmodified upstream revision"
+    },
+    {
+      "id": "voxgarden",
+      "source": "https://github.com/KiwiSingh/VoxGarden",
+      "revision": "8ab73f3a123a92655f5d340183a91f9a01848152",
+      "license": "AGPL-3.0",
+      "attribution": "Kiwi Singh and contributors",
+      "approval": "development-only",
+      "checksum": "bee016e6f9c4b2b78417a0292f9c465b87b97d0c55bf672ca4b8fe2302d72c7a",
+      "redistributionBasis": "Repository LICENSE; combined distribution review pending",
+      "checksumKind": "SHA-256 of git archive HEAD (tar), unmodified upstream revision",
+      "integrationPatchSha256": "35df26bbd302c6dbb7be84e1fe2c6bc01fd86706855af77923d1d322ca931d43"
+    },
+    {
+      "id": "juce",
+      "source": "https://github.com/juce-framework/JUCE",
+      "revision": "f72bad64d29715216226685810c5196bd0d79d77",
+      "license": "AGPL-3.0 OR commercial",
+      "attribution": "Raw Material Software Limited",
+      "approval": "development-only",
+      "checksum": "446908b50ee5e12cecdf116c720e4887068ece5cb2c558e7189662e27170f829",
+      "redistributionBasis": "Use AGPL terms for preview; exact notices and corresponding-source packaging required",
+      "checksumKind": "SHA-256 of git archive HEAD (tar), unmodified upstream revision"
+    },
+    {
+      "id": "signalsmith-linear",
+      "source": "https://github.com/Signalsmith-Audio/linear",
+      "revision": "7bb1c8f36794d6980080ce817c91f8da8fe56a66",
+      "license": "MIT",
+      "attribution": "Signalsmith Audio",
+      "approval": "development-only",
+      "checksum": "2f7b648cab8ba28835b02a6a1e32b0da94ca4f8fecf3622df2e1e8e368fafa22",
+      "redistributionBasis": "Preserve upstream license notice",
+      "checksumKind": "SHA-256 of git archive HEAD (tar), unmodified upstream revision"
+    },
+    {
+      "id": "signalsmith-stretch",
+      "source": "https://github.com/Signalsmith-Audio/signalsmith-stretch",
+      "revision": "88061fd4eda56a2353c5d65c74aa3f4ccf76f9da",
+      "license": "MIT",
+      "attribution": "Signalsmith Audio",
+      "approval": "development-only",
+      "checksum": "df363349c5466b74fdf5d649b2120ac8af1e6a965c936e85110807c11a857931",
+      "redistributionBasis": "Preserve upstream license notice",
+      "checksumKind": "SHA-256 of git archive HEAD (tar), unmodified upstream revision"
+    },
+    {
+      "id": "meta-open-sound",
+      "source": "https://github.com/facebookincubator/Meta-open-sound",
+      "revision": null,
+      "license": "candidate CC0; verify chosen release",
+      "attribution": "See upstream release",
+      "approval": "candidate-not-packaged",
+      "checksum": null,
+      "redistributionBasis": null
+    },
+    {
+      "id": "big-rusty-drums",
+      "source": "https://github.com/sfzinstruments/karoryfer.big-rusty-drums",
+      "revision": null,
+      "license": "pending exact sample and mapping audit",
+      "attribution": "Karoryfer Samples and upstream contributors",
+      "approval": "candidate-not-packaged",
+      "checksum": null,
+      "redistributionBasis": null
+    }
+  ]
+}

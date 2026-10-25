@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "name": "Replace with cleared pack name",
+  "redistribution": "pending",
+  "license": "",
+  "source": "",
+  "attribution": "",
+  "regions": [
+    {"file": "samples/sustain-c4-soft-rr1.wav", "sha256": "REPLACE_WITH_ACTUAL_SHA256", "note": 60, "velocityLow": 1, "velocityHigh": 63, "chokeGroup": 0},
+    {"file": "samples/sustain-c4-soft-rr2.wav", "sha256": "REPLACE_WITH_ACTUAL_SHA256", "note": 60, "velocityLow": 1, "velocityHigh": 63, "chokeGroup": 0}
+  ]
+}

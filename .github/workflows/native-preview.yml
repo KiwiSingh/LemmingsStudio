@@ -1,0 +1,48 @@
+name: Native studio preview
+on:
+  push:
+    paths: ['NativeStudio/**', '.github/workflows/native-preview.yml']
+  pull_request:
+    paths: ['NativeStudio/**', '.github/workflows/native-preview.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, macos-14]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure pinned native foundation
+        run: cmake -S NativeStudio -B native-build -DCMAKE_BUILD_TYPE=Release
+      - name: Build application, checks, and plugin products
+        run: cmake --build native-build --config Release --parallel 2
+      - name: Session, audio, and instrument checks
+        run: ctest --test-dir native-build -C Release --output-on-failure
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Scanner failure and quarantine checks
+        run: python -m unittest discover -s NativeStudio/tests -p test_*.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-preview-${{ matrix.os }}
+          path: |
+            native-build/LemmingsNative_artefacts/Release/
+            native-build/LemmingAmp_artefacts/Release/
+            native-build/LemmingGuitar_artefacts/Release/
+            native-build/LemmingRockDrums_artefacts/Release/
+  voxgarden-windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build pinned VoxGarden with Windows DSP patch
+        shell: pwsh
+        run: ./NativeStudio/tools/build-vox.ps1 -Destination "$env:RUNNER_TEMP/VoxGarden"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: voxgarden-windows-dsp-preview
+          path: ${{ runner.temp }}/VoxGarden/build/VoxGarden_artefacts/Release/

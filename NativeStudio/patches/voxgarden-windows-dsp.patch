@@ -1,0 +1,170 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index d5d6968..bfa1598 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -6,7 +6,11 @@ set(VOX_DEPS "${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty" CACHE PATH "Dependency che
+ add_subdirectory(${VOX_DEPS}/JUCE JUCE)
+ add_subdirectory(${VOX_DEPS}/linear linear)
+ add_subdirectory(${VOX_DEPS}/signalsmith-stretch stretch)
+-juce_add_plugin(VoxGarden COMPANY_NAME "Kiwi Singh" BUNDLE_ID "audio.voxgarden.choir" PLUGIN_MANUFACTURER_CODE Vxga PLUGIN_CODE Vxg1 FORMATS VST3 AU Standalone PRODUCT_NAME "VoxGarden" IS_SYNTH FALSE NEEDS_MIDI_INPUT TRUE NEEDS_MIDI_OUTPUT FALSE IS_MIDI_EFFECT FALSE COPY_PLUGIN_AFTER_BUILD FALSE VST3_CATEGORIES Fx PitchShift AU_MAIN_TYPE kAudioUnitType_MusicEffect)
++set(VOX_FORMATS VST3 Standalone)
++if(APPLE)
++  list(APPEND VOX_FORMATS AU)
++endif()
++juce_add_plugin(VoxGarden COMPANY_NAME "Kiwi Singh" BUNDLE_ID "audio.voxgarden.choir" PLUGIN_MANUFACTURER_CODE Vxga PLUGIN_CODE Vxg1 FORMATS ${VOX_FORMATS} PRODUCT_NAME "VoxGarden" IS_SYNTH FALSE NEEDS_MIDI_INPUT TRUE NEEDS_MIDI_OUTPUT FALSE IS_MIDI_EFFECT FALSE COPY_PLUGIN_AFTER_BUILD FALSE VST3_CATEGORIES Fx PitchShift AU_MAIN_TYPE kAudioUnitType_MusicEffect)
+ juce_add_binary_data(VoxGardenSingingResources HEADER_NAME SingingResources.h NAMESPACE SingingData SOURCES Singing/runtime.py Singing/bootstrap.sh Singing/model-manifest.json)
+ target_link_libraries(VoxGarden PUBLIC VoxGardenSingingResources juce::juce_cryptography)
+ target_sources(VoxGarden PRIVATE Source/Processor.cpp Source/Editor.cpp)
+@@ -15,7 +19,7 @@ target_compile_definitions(VoxGarden PUBLIC JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 J
+ target_link_libraries(VoxGarden PUBLIC juce::juce_audio_utils juce::juce_dsp signalsmith-stretch PRIVATE juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
+ juce_add_console_app(VoxGardenCheck PRODUCT_NAME "VoxGardenCheck")
+ target_sources(VoxGardenCheck PRIVATE tests/Checks.cpp)
+-target_compile_definitions(VoxGardenCheck PRIVATE JUCE_PLUGINHOST_VST3=1 JUCE_PLUGINHOST_AU=1)
++target_compile_definitions(VoxGardenCheck PRIVATE JUCE_PLUGINHOST_VST3=1 JUCE_PLUGINHOST_AU=$<BOOL:${APPLE}>)
+ target_link_libraries(VoxGardenCheck PRIVATE VoxGarden)
+ enable_testing()
+ add_test(NAME DSP_and_state COMMAND VoxGardenCheck)
+diff --git a/Source/AI.h b/Source/AI.h
+index 02a2605..604b8be 100644
+--- a/Source/AI.h
++++ b/Source/AI.h
+@@ -4,7 +4,13 @@
+ #include <functional>
+ namespace vg {
+ inline juce::File aiRoot(){return juce::File::getSpecialLocation(juce::File::userHomeDirectory).getChildFile("Library/Application Support/VoxGarden/AI");}
+-inline bool aiReady(){auto r=aiRoot();return r.getChildFile("READY.json").existsAsFile() && r.getChildFile("python/bin/python").existsAsFile() && r.getChildFile("choir_worker.py").existsAsFile() && r.getChildFile("voices/manifest.json").existsAsFile();}
++inline bool aiReady(){
++#if !JUCE_MAC
++return false;
++#else
++auto r=aiRoot();return r.getChildFile("READY.json").existsAsFile() && r.getChildFile("python/bin/python").existsAsFile() && r.getChildFile("choir_worker.py").existsAsFile() && r.getChildFile("voices/manifest.json").existsAsFile();
++#endif
++}
+ inline juce::var aiSettings(const Settings& s){
+     auto obj=new juce::DynamicObject;juce::var result(obj);
+     obj->setProperty("root",s.root);obj->setProperty("scale",s.scale);obj->setProperty("mode",s.mode);obj->setProperty("count",s.count);obj->setProperty("aiCast",s.aiCast);obj->setProperty("raga",s.raga);
+diff --git a/Source/Composer.h b/Source/Composer.h
+index 4e500eb..9d8c8b8 100644
+--- a/Source/Composer.h
++++ b/Source/Composer.h
+@@ -24,7 +24,11 @@ class ScoreComposer final:public juce::Component,public juce::FileDragAndDropTar
+     void report(const char* s){report(juce::String::fromUTF8(s));}
+     void report(const juce::String& s){message.setText(tr(s),juce::dontSendNotification);}
+     void saveDraft(){{const juce::ScopedLock lock(processor.scoreLock);processor.scoreDraft=grid.getText();processor.scoreChordMode=chordMode.getSelectedId()-1;processor.scoreLanguage=language.getSelectedId()-1;processor.scoreVoice=juce::jlimit(0,9,singingVoice.getSelectedId()-1);}dry=juce::File{};choir.setFile(dry);reveal.setEnabled(false);processor.updateHostDisplay(juce::AudioProcessor::ChangeDetails{}.withNonParameterStateChanged(true));}
+-    void busy(bool on){for(auto* b:{&importMidi,&importAudio,&assign,&addNote,&deleteNote})b->setEnabled(!on);grid.setReadOnly(on);lyrics.setReadOnly(on);language.setEnabled(!on);singingVoice.setEnabled(!on);tracks.setEnabled(!on);chordMode.setEnabled(!on);deleteNote.setEnabled(!on&&grid.hasSelection());download.setEnabled(!on);download.setButtonText(tr(vg::singingReady()?"Check / repair models":"Download voices (~401 MB)"));generate.setButtonText(tr(on?"Cancel":"Render dry singing"));choir.setEnabled(!on&&dry.existsAsFile());reveal.setEnabled(!on&&dry.existsAsFile());}
++    void busy(bool on){for(auto* b:{&importMidi,&importAudio,&assign,&addNote,&deleteNote})b->setEnabled(!on);grid.setReadOnly(on);lyrics.setReadOnly(on);language.setEnabled(!on);singingVoice.setEnabled(!on);tracks.setEnabled(!on);chordMode.setEnabled(!on);deleteNote.setEnabled(!on&&grid.hasSelection());download.setEnabled(!on);download.setButtonText(tr(vg::singingReady()?"Check / repair models":"Download voices (~401 MB)"));generate.setButtonText(tr(on?"Cancel":"Render dry singing"));choir.setEnabled(!on&&dry.existsAsFile());reveal.setEnabled(!on&&dry.existsAsFile());
++#if !JUCE_MAC
++        download.setEnabled(false);if(!on)generate.setEnabled(false);
++#endif
++    }
+     void import(const juce::File& f){if(pending)return;
+         if(f.hasFileExtension("mid;midi")){auto result=vg::readMidiScore(f,midiTracks);if(result.isNotEmpty()){report(result);return;}tracks.clear();for(int i=0;i<(int)midiTracks.size();++i)tracks.addItem(midiTracks[(size_t)i].name,i+1);tracks.setSelectedId(1,juce::sendNotificationSync);report("Choose a MIDI track. Overlapping notes are rendered together.");}
+         else{jobInput=f;job=transcribe;pending=true;progress=0;busy(true);report("Extracting a monophonic melody…");startThread();}
+@@ -70,7 +74,11 @@ public:
+         assign.onClick=[this]{vg::Score notes;auto result=vg::parseScore(grid.getText(),notes);if(result.isNotEmpty()){report(result);return;}auto syllables=juce::StringArray::fromTokens(lyrics.getText(),"|","");for(auto& s:syllables)s=s.trim();if(!vg::assignScoreSyllables(notes,syllables,chordMode.getSelectedId()-1)){report("Supply one syllable per note or simultaneous chord, separated by |.");return;}grid.setText(vg::scoreText(notes));report("Syllables assigned. Adjust note start and duration in seconds.");};
+         generate.onClick=[this]{if(pending){signalThreadShouldExit();generate.setEnabled(false);report("Cancelling…");return;}if(!vg::singingReady()){report("Download the singing models in this window first.");return;}error=vg::parseScore(grid.getText(),jobScore);if(error.isNotEmpty()){report(error);return;}vg::prepareScoreChords(jobScore,chordMode.getSelectedId()-1);folder=juce::File::getSpecialLocation(juce::File::userMusicDirectory).getChildFile("VoxGarden Renders").getNonexistentChildFile("Singing "+juce::Time::getCurrentTime().formatted("%Y-%m-%d %H-%M-%S"),"");jobLanguage=language.getSelectedId()-1;jobVoice=singingVoice.getText();job=sing;pending=true;progress=0;busy(true);startThread();};
+         choir.setTooltip(tr("Drag the dry WAV onto the Live audio track containing VoxGarden. Click to reveal the file."));choir.onTransfer=[this](bool started){report(started?"Drop onto an audio clip lane or empty Session slot on the VoxGarden track, then play and adjust the choir.":"Could not start the drag. Click to reveal the dry WAV, then drag it from Finder.");};choir.onClick=[this]{if(dry.existsAsFile()){dry.revealToUser();report("Drag the revealed dry WAV onto the Live audio track containing VoxGarden, then play and adjust the choir.");}};reveal.onClick=[this]{if(dry.existsAsFile())dry.revealToUser();};
+-        busy(false);report("Import a melody, align syllables, then render. Neural speech is retimed to your score; this is an experimental singing voice.");
++        busy(false);
++#if !JUCE_MAC
++        download.setEnabled(false);generate.setEnabled(false);modelStatus.setText("Windows DSP preview: neural singing is not available. MIDI and lyric editing remain available.",juce::dontSendNotification);
++#endif
++        report("Import a melody, align syllables, then render. Neural speech is retimed to your score; this is an experimental singing voice.");
+         vg::localiseComponent(*this,p.language.load());setSize(920,750);startTimerHz(8);if(initial.existsAsFile())import(initial);
+     }
+     ~ScoreComposer()override{stopTimer();signalThreadShouldExit();stopThread(-1);setLookAndFeel(nullptr);}
+diff --git a/Source/Editor.cpp b/Source/Editor.cpp
+index 880de06..adf3fd0 100644
+--- a/Source/Editor.cpp
++++ b/Source/Editor.cpp
+@@ -127,6 +127,9 @@ VoxGardenEditor::VoxGardenEditor(VoxGardenProcessor& proc):AudioProcessorEditor(
+     presets.setComponentID("presets");presets.setText("Explore the choir...",juce::dontSendNotification);presets.onChange=[this]{p.applyPreset(presets.getSelectedId()-1);};
+     for(auto pair:std::initializer_list<std::pair<const char*,juce::ComboBox*>>{{"root",&root},{"scale",&scale},{"mode",&mode},{"aiCast",&aiCast},{"raga",&raga}})choices.push_back(std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(p.state,pair.first,*pair.second));
+     aiAttachment=std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(p.state,"aiPrint",aiPrint);
++#if !JUCE_MAC
++    aiPrint.setEnabled(false);aiPrint.setTooltip("Windows DSP preview: AI printing is not available on this platform.");
++#endif
+     aiBlend.setLookAndFeel(&look);aiBlend.setSliderStyle(juce::Slider::LinearHorizontal);aiBlend.setTextBoxStyle(juce::Slider::TextBoxRight,false,42,20);aiBlend.setTooltip("AI singer blend for printed audio. Live playback remains the DSP preview.");aiBlendAttachment=std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(p.state,"aiBlend",aiBlend);
+     formantAttachment=std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(p.state,"formantLock",formants);
+     addControl("mix","CHOIR MIX");addControl("gain","OUTPUT");addControl("correction","SCALE LOCK");addControl("glide","GLIDE / MS");addControl("detune","DETUNE / CT");addControl("vibrato","VIBRATO / CT");addControl("human","TIMING / MS");addControl("width","WIDTH");addControl("space","ROOM");addControl("weird","MUTATION");
+diff --git a/Source/Neural.h b/Source/Neural.h
+index 5d6b01e..4e58c5d 100644
+--- a/Source/Neural.h
++++ b/Source/Neural.h
+@@ -2,6 +2,7 @@
+ #include "Score.h"
+ #include <juce_cryptography/juce_cryptography.h>
+ #include "SingingResources.h"
++#if JUCE_MAC
+ #include <spawn.h>
+ #include <sys/wait.h>
+ #include <signal.h>
+@@ -9,15 +10,23 @@
+ #include <cerrno>
+ #include <unistd.h>
+ extern char** environ;
++#endif
+ namespace vg {
+ inline juce::File singingRoot(){return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory).getChildFile("Application Support/VoxGarden/Singing");}
+-inline bool singingReady(){auto root=singingRoot();auto ready=juce::JSON::parse(root.getChildFile("READY.json"));return (int)ready.getProperty("schema",0)==1 && ready.getProperty("model_revision",{}).toString()=="724fb5abbf5502583fb520898d45929e62f02c0b" && root.getChildFile("python/bin/python").existsAsFile();}
++inline bool singingReady(){
++#if !JUCE_MAC
++ return false;
++#else
++auto root=singingRoot();auto ready=juce::JSON::parse(root.getChildFile("READY.json"));return (int)ready.getProperty("schema",0)==1 && ready.getProperty("model_revision",{}).toString()=="724fb5abbf5502583fb520898d45929e62f02c0b" && root.getChildFile("python/bin/python").existsAsFile();
++#endif
++}
+ inline bool installSingingHelpers(){auto root=singingRoot();if(!root.createDirectory())return false;
+     auto write=[&](const char* name,const char* data,int size){auto file=root.getChildFile(name);auto hash=juce::SHA256(data,(size_t)size).toHexString();if(file.existsAsFile()&&juce::SHA256(file).toHexString()==hash)return true;return file.replaceWithData(data,(size_t)size);};
+     return write("runtime.py",SingingData::runtime_py,SingingData::runtime_pySize)&&write("bootstrap.sh",SingingData::bootstrap_sh,SingingData::bootstrap_shSize)&&write("model-manifest.json",SingingData::modelmanifest_json,SingingData::modelmanifest_jsonSize);
+ }
+ // A separate process group makes Cancel stop downloads and their children as well.
+ inline int runSingingProcess(const juce::StringArray& args,const juce::File& log,const std::function<bool()>& cancelled,const std::function<void()>& poll){
++#if JUCE_MAC
+     std::vector<std::string> storage;for(auto& a:args)storage.push_back(a.toStdString());std::vector<char*> argv;for(auto& a:storage)argv.push_back(a.data());argv.push_back(nullptr);
+     posix_spawnattr_t attributes;posix_spawnattr_init(&attributes);posix_spawnattr_setflags(&attributes,POSIX_SPAWN_SETPGROUP);posix_spawnattr_setpgroup(&attributes,0);
+     posix_spawn_file_actions_t actions;posix_spawn_file_actions_init(&actions);posix_spawn_file_actions_addopen(&actions,STDOUT_FILENO,log.getFullPathName().toRawUTF8(),O_CREAT|O_WRONLY|O_TRUNC,0600);posix_spawn_file_actions_adddup2(&actions,STDOUT_FILENO,STDERR_FILENO);
+@@ -26,6 +35,10 @@ inline int runSingingProcess(const juce::StringArray& args,const juce::File& log
+         if(cancelled()){kill(-pid,SIGTERM);for(int i=0;i<20;++i){if(waitpid(pid,&result,WNOHANG)==pid){kill(-pid,SIGKILL);return -2;}juce::Thread::sleep(25);}kill(-pid,SIGKILL);waitpid(pid,&result,0);return -2;}
+         poll();juce::Thread::sleep(100);
+     }poll();return WIFEXITED(result)?WEXITSTATUS(result):1;
++#else
++    juce::ignoreUnused(args,log,cancelled,poll);
++    return -1; // Neural runtime is deliberately unavailable in the Windows DSP release.
++#endif
+ }
+ inline juce::String renderNeuralScore(const Score& notes,int language,const juce::String& voice,const juce::File& folder,std::atomic<float>& progress,const std::function<bool()>& cancelled,juce::File& result){
+     if(!singingReady())return "Download the singing models in this window first.";
+diff --git a/Source/Processor.cpp b/Source/Processor.cpp
+index 4888a66..b22b3b4 100644
+--- a/Source/Processor.cpp
++++ b/Source/Processor.cpp
+@@ -56,6 +56,9 @@ vg::Settings VoxGardenProcessor::settings() const {
+     vg::Settings s;auto val=[&](int i){return cached[(size_t)i]->load(std::memory_order_relaxed);};
+     s.root=(int)val(0);s.scale=(int)val(1);s.mode=(int)val(2);s.mix=val(3);s.gain=val(4);s.detune=val(5);s.vibrato=val(6);s.human=val(7);s.width=val(8);s.correction=val(9);s.glide=val(10);s.space=val(11);s.weird=val(12);s.formantLock=val(13)>.5f;s.count=juce::jlimit(1,vg::voices,(int)val(14)+(int)extraVoices->load());s.aiPrint=val(15)>.5f;s.aiBlend=val(16);s.aiCast=(int)val(17);s.raga=(int)val(18);if(s.raga>0)s.scale=vg::ragaScales[(size_t)(s.raga-1)];
+     for(int v=0;v<vg::voices;++v) {const auto& c=cachedVoice[(size_t)v];s.voice[(size_t)v]={c.level->load(),c.pan->load(),c.formant->load(),c.delay->load(),(int)c.degree->load(),c.mute->load()>.5f,c.solo->load()>.5f};}
++#if !JUCE_MAC
++    s.aiPrint=false; // Keep saved parameter values intact for return to macOS.
++#endif
+     return s;
+ }
+ void VoxGardenProcessor::setValue(const juce::String& id,float v) {if(auto* p=state.getParameter(id)){p->beginChangeGesture();p->setValueNotifyingHost(p->convertTo0to1(v));p->endChangeGesture();}}
+diff --git a/tests/Checks.cpp b/tests/Checks.cpp
+index 531f7c8..31f1b6d 100644
+--- a/tests/Checks.cpp
++++ b/tests/Checks.cpp
+@@ -189,7 +189,13 @@ int main(int argc,char** argv) {
+     }
+     {
+         processor.setValue("aiPrint",1);processor.setValue("aiBlend",.7f);juce::MemoryBlock data;processor.getStateInformation(data);processor.setValue("aiPrint",0);processor.setStateInformation(data.getData(),(int)data.getSize());
+-        check(processor.settings().aiPrint && std::abs(processor.settings().aiBlend-.7f)<.001f,"AI print and blend controls restore from state");processor.setValue("aiPrint",0);
++        #if JUCE_MAC
++        check(processor.settings().aiPrint && std::abs(processor.settings().aiBlend-.7f)<.001f,"AI print and blend controls restore from state");
++#else
++        check(!processor.settings().aiPrint && processor.state.getRawParameterValue("aiPrint")->load()>.5f && std::abs(processor.settings().aiBlend-.7f)<.001f,"Windows DSP disables AI execution while preserving saved AI controls");
++        check(!vg::singingReady()&&!vg::aiReady(),"Windows DSP does not advertise unsupported neural runtimes");
++#endif
++        processor.setValue("aiPrint",0);
+         auto folder=juce::File::getSpecialLocation(juce::File::tempDirectory).getNonexistentChildFile("VoxGarden-AI-mix-check","");folder.createDirectory();
+         juce::WavAudioFormat wav;juce::AudioBuffer<float> audio(1,48000);std::vector<juce::File> sources;
+         for(int k=0;k<2;++k){for(int i=0;i<48000;++i)audio.setSample(0,i,.1f*std::sin(juce::MathConstants<double>::twoPi*(k==0?220:440)*i/48000));auto f=folder.getChildFile(k==0?"input.wav":"ai.wav");auto stream=f.createOutputStream();std::unique_ptr<juce::AudioFormatWriter> w(wav.createWriterFor(stream.release(),48000,1,24,{},0));w->writeFromAudioSampleBuffer(audio,0,48000);if(k==1)sources.push_back(f);}
