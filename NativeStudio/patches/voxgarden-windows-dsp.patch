@@ -1,8 +1,17 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index d5d6968..bfa1598 100644
+index d5d6968..5cc07a0 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -6,7 +6,11 @@ set(VOX_DEPS "${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty" CACHE PATH "Dependency che
+@@ -1,12 +1,20 @@
+ cmake_minimum_required(VERSION 3.24)
+ project(VoxGarden VERSION 3.0.0 LANGUAGES C CXX)
++# Keep clean Windows VM deployment independent of a separate VC runtime install.
++if(MSVC)
++  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
++endif()
+ set(CMAKE_CXX_STANDARD 17)
+ set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "")
+ set(VOX_DEPS "${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty" CACHE PATH "Dependency checkout directory")
  add_subdirectory(${VOX_DEPS}/JUCE JUCE)
  add_subdirectory(${VOX_DEPS}/linear linear)
  add_subdirectory(${VOX_DEPS}/signalsmith-stretch stretch)
@@ -15,7 +24,7 @@ index d5d6968..bfa1598 100644
  juce_add_binary_data(VoxGardenSingingResources HEADER_NAME SingingResources.h NAMESPACE SingingData SOURCES Singing/runtime.py Singing/bootstrap.sh Singing/model-manifest.json)
  target_link_libraries(VoxGarden PUBLIC VoxGardenSingingResources juce::juce_cryptography)
  target_sources(VoxGarden PRIVATE Source/Processor.cpp Source/Editor.cpp)
-@@ -15,7 +19,7 @@ target_compile_definitions(VoxGarden PUBLIC JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 J
+@@ -15,7 +23,7 @@ target_compile_definitions(VoxGarden PUBLIC JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 J
  target_link_libraries(VoxGarden PUBLIC juce::juce_audio_utils juce::juce_dsp signalsmith-stretch PRIVATE juce::juce_recommended_config_flags juce::juce_recommended_warning_flags)
  juce_add_console_app(VoxGardenCheck PRODUCT_NAME "VoxGardenCheck")
  target_sources(VoxGardenCheck PRIVATE tests/Checks.cpp)

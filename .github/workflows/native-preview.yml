@@ -32,6 +32,7 @@ jobs:
           name: native-preview-${{ matrix.os }}
           path: |
             native-build/LemmingsNative_artefacts/Release/
+            native-build/StudioChecks_artefacts/Release/
             native-build/LemmingAmp_artefacts/Release/
             native-build/LemmingGuitar_artefacts/Release/
             native-build/LemmingRockDrums_artefacts/Release/
@@ -45,4 +46,6 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: voxgarden-windows-dsp-preview
-          path: ${{ runner.temp }}/VoxGarden/build/VoxGarden_artefacts/Release/
+          path: |
+            ${{ runner.temp }}/VoxGarden/build/VoxGarden_artefacts/Release/
+            ${{ runner.temp }}/VoxGarden/build/VoxGardenCheck_artefacts/Release/

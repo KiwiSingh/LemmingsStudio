@@ -1,5 +1,9 @@
 cmake_minimum_required(VERSION 3.24)
 project(LemmingsNative VERSION 0.1.0 LANGUAGES C CXX)
+# Keep clean Windows VM deployment independent of a separate VC runtime install.
+if(MSVC)
+  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_OSX_DEPLOYMENT_TARGET 12.0 CACHE STRING "")

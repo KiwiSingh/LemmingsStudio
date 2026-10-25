@@ -24,7 +24,7 @@
       "checksum": "bee016e6f9c4b2b78417a0292f9c465b87b97d0c55bf672ca4b8fe2302d72c7a",
       "redistributionBasis": "Repository LICENSE; combined distribution review pending",
       "checksumKind": "SHA-256 of git archive HEAD (tar), unmodified upstream revision",
-      "integrationPatchSha256": "35df26bbd302c6dbb7be84e1fe2c6bc01fd86706855af77923d1d322ca931d43"
+      "integrationPatchSha256": "efbe9a376f74ee30030a4856473faf44686d5b79e10ec2c01803bb493c9fd26e"
     },
     {
       "id": "juce",
