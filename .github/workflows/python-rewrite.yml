@@ -42,6 +42,29 @@ jobs:
           Copy-Item Docs/PythonRewrite/dependencies.json "$output/dependency-license-metadata.json"
           $sha = git rev-parse HEAD
           @{ commit=$sha; target='Windows x64'; macOSProduct='unchanged Swift application'; releaseStatus='experimental; full parity and distribution audit pending' } | ConvertTo-Json | Set-Content "$output/build-manifest.json"
+      - name: Build the per-user setup wizard
+        shell: pwsh
+        run: |
+          choco install innosetup --version=6.5.4 --allow-downgrade --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { throw 'Setup compiler installation failed.' }
+          $extra = "$env:RUNNER_TEMP/python-preview/application"
+          Copy-Item PythonStudio/installer/Preview-Information.txt $extra
+          $bundle = "$extra/LemmingsStudio Windows Preview"
+          $output = "$env:RUNNER_TEMP/python-preview/setup"
+          & "${env:ProgramFiles(x86)}/Inno Setup 6/ISCC.exe" "/DBundleRoot=$bundle" "/DExtraRoot=$extra" "/DOutputRoot=$output" "/DBuildVersion=0.1.0.${{ github.run_number }}" PythonStudio/installer/setup.iss
+          if ($LASTEXITCODE -ne 0) { throw 'Setup compilation failed.' }
+      - name: Verify setup, installed application, reinstall and uninstall
+        shell: pwsh
+        run: |
+          $setup = @(Get-ChildItem "$env:RUNNER_TEMP/python-preview/setup" -Filter '*.exe')
+          if ($setup.Count -ne 1) { throw 'Expected one setup executable.' }
+          ./PythonStudio/installer/test-setup.ps1 -Installer $setup[0].FullName -TestRoot "$env:RUNNER_TEMP/python-preview/lifecycle"
+          Get-FileHash $setup[0].FullName -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLowerInvariant())  $([IO.Path]::GetFileName($_.Path))" } | Set-Content "$env:RUNNER_TEMP/python-preview/setup/SHA256SUMS.txt" -Encoding ascii
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LemmingsStudio-Windows-Python-Setup
+          path: ${{ runner.temp }}/python-preview/setup/
+          if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
           name: LemmingsStudio-Windows-Python-Preview
@@ -54,4 +77,6 @@ jobs:
           path: |
             python-test-results.xml
             ${{ runner.temp }}/python-preview/bundle-smoke.json
+            ${{ runner.temp }}/python-preview/lifecycle/*.json
+            ${{ runner.temp }}/python-preview/lifecycle/*.log
           if-no-files-found: ignore
