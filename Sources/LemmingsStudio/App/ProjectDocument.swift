@@ -169,9 +169,19 @@ struct TrackDoc: Codable {
     var loopDragEnabled: Bool?
     var sequencerPrintSourceTrackID: UUID?
     var sequencerPrintTargetTrackID: UUID?
+    var groupID: UUID?
+    var drumGenre: String?
+    var stepPattern: StepPatternDoc?
+    var frozen: Bool?
+    var bounced: AudioClipDoc?
 
     init(track: Track, index: Int) {
         id = track.id
+        groupID = track.groupID
+        drumGenre = track.drumGenre.rawValue
+        stepPattern = StepPatternDoc(track.stepPattern)
+        frozen = track.frozen
+        bounced = track.bounced.map(AudioClipDoc.init)
         name = track.name
         kind = track.kind.rawValue
         colorIndex = index
@@ -208,6 +218,11 @@ struct TrackDoc: Codable {
         let palette: [Color] = [.blue, .orange, .green, .pink, .purple, .teal, .red, .yellow]
         let track = Track(name: name, kind: InstrumentKind(rawValue: kind) ?? .analog, color: palette[(colorIndex >= 0 ? colorIndex : index) % palette.count])
         if let id { track.id = id }
+        track.groupID = groupID
+        if let drumGenre, let genre = DrumGenre(rawValue: drumGenre) { track.drumGenre = genre }
+        if let stepPattern { track.stepPattern = stepPattern.make() }
+        track.bounced = bounced?.make()
+        track.frozen = (frozen ?? false) && track.bounced != nil
         track.clips = clips.map { $0.make(color: track.color) }
         track.audioClips = audioClips.map { $0.make() }
         track.devices = devices.map { $0.make() }
@@ -503,4 +518,21 @@ struct TrackGroupDoc: Codable {
     var automationLanes: [AutomationLaneDoc]?
     init(_ group: TrackGroup) { id = group.id; name = group.name; trackIDs = group.trackIDs; devices = group.devices.map(DeviceDoc.init); volume = group.volume; pan = group.pan; mute = group.mute; solo = group.solo; automationLanes = group.automationLanes.map(AutomationLaneDoc.init) }
     func make() -> TrackGroup { TrackGroup(id: id ?? UUID(), name: name, trackIDs: trackIDs, devices: devices.map { $0.make() }, volume: volume, pan: pan, mute: mute, solo: solo, automationLanes: automationLanes?.map { $0.make() } ?? []) }
+}
+
+struct StepPatternDoc: Codable {
+    var stepCount: Int
+    var stepsPerBeat: Int
+    var steps: [Step]
+    init(_ pattern: StepPattern) {
+        stepCount = pattern.stepCount
+        stepsPerBeat = pattern.stepsPerBeat
+        steps = pattern.steps
+    }
+    func make() -> StepPattern {
+        let pattern = StepPattern(stepCount: 0, stepsPerBeat: max(1, stepsPerBeat))
+        pattern.stepCount = stepCount
+        pattern.steps = steps
+        return pattern
+    }
 }

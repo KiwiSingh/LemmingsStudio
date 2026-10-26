@@ -36,7 +36,7 @@ public struct ClipNote: Identifiable, Hashable {
 
 // MARK: - Step sequencer (FL-style)
 
-public struct Step: Hashable {
+public struct Step: Hashable, Codable {
     /// Back-compat primary flag/note. The beta sequencer now supports several
     /// row hits on the same time cell, so kick+hat+snare overlaps are legal.
     public var on: Bool = false

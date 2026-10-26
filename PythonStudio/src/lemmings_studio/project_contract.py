@@ -54,7 +54,7 @@ def _entities(data):
         for clip in track.get('clips', []):
             yield clip
             yield from clip.get('notes', [])
-        for clip in track.get('audioClips', []):
+        for clip in [*track.get('audioClips', []), *([track['bounced']] if track.get('bounced') else [])]:
             yield clip
             yield from clip.get('devices', [])
             yield from clip.get('externalPluginSlots', [])
@@ -124,12 +124,15 @@ class ProjectFile:
     def reference_warnings(self) -> list[str]:
         tracks = {_uuid(t['id']) for t in self.data.get('tracks', []) if t.get('id')}
         buses = {_uuid(t['id']) for t in (self.data.get('returnBuses') or []) if t.get('id')}
+        groups = {_uuid(g['id']) for g in (self.data.get('groups') or []) if g.get('id')}
         warnings = []
         for group in (self.data.get('groups') or []):
             for ref in group.get('trackIDs', []):
                 if _uuid(ref) not in tracks:
                     warnings.append(f'Unresolved group track: {ref}')
         for obj in _entities(self.data):
+            if obj.get('groupID') and _uuid(obj['groupID']) not in groups:
+                warnings.append(f"Unresolved groupID: {obj['groupID']}")
             for key in ('sidechainInputTrackID', 'sequencerPrintSourceTrackID', 'sequencerPrintTargetTrackID'):
                 if obj.get(key) and _uuid(obj[key]) not in tracks:
                     warnings.append(f'Unresolved {key}: {obj[key]}')

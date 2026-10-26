@@ -16,6 +16,10 @@ track.automationLanes = [AutomationLane(nodeID: device.nodeID, paramID: "thresho
 track.sequencerPrintTargetTrackID = other.id
 project.tracks = [track, other]
 project.groups = [TrackGroup(name: "Group", trackIDs: [track.id, other.id])]
+track.groupID = project.groups[0].id
+track.drumGenre = .rock
+track.stepPattern.setHit(step: 0, note: 36, enabled: true)
+track.stepPattern.setHit(step: 0, note: 42, enabled: true)
 project.swingAmount = 0.2
 project.customChannelCount = 12
 project.channelNames = ["Front L", "Front R"]
@@ -27,6 +31,9 @@ require(restored.tracks[0].devices[0].id == device.id, "Device ID lost")
 require(restored.tracks[0].devices[0].sidechainInputTrackID == restored.tracks[1].id, "Sidechain disconnected")
 require(restored.tracks[0].automationLanes[0].nodeID == restored.tracks[0].devices[0].nodeID, "Automation disconnected")
 require(restored.groups[0].trackIDs == restored.tracks.map { $0.id }, "Group disconnected")
+require(restored.tracks[0].groupID == restored.groups[0].id, "Group audio routing disconnected")
+require(restored.tracks[0].drumGenre == .rock, "Drum kit changed on reopen")
+require(restored.tracks[0].stepPattern.notes(atStep: 0) == [36, 42], "Simultaneous drum hits lost")
 require(restored.tracks[0].clips[0].id == track.clips[0].id, "Clip ID lost")
 require(restored.tracks[0].clips[0].notes[0].id == track.clips[0].notes[0].id, "Note ID lost")
 require(restored.tracks[0].sequencerLayers[0].id == track.sequencerLayers[0].id, "Layer ID lost")

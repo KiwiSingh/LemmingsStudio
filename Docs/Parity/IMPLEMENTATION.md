@@ -88,7 +88,8 @@ implementation completion.
 Implemented in this change:
 
 - Swift v3 stable IDs for tracks, clips, notes, devices, layers, sends, groups and
-  external slots; master effects, global swing and channel settings persisted.
+  external slots; group routing, selected drum kit, multi-hit step patterns, freeze
+  state, master effects, global swing and channel settings persisted.
 - Swift unknown fields retained by identity when reordered; clearing an optional
   known field does not resurrect old state. Legacy v1/v2 decoding retained;
   unsupported future versions rejected.

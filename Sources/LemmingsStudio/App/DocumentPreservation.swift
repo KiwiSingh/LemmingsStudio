@@ -4,12 +4,13 @@ import Foundation
 enum DocumentPreservation {
     private static let known: [String: Set<String>] = [
         "root": Set(["version", "name", "tempo", "bpm", "beatsPerBar", "lengthBars", "keyRoot", "keyName", "scaleName", "keySnapEnabled", "tempoAutomationEnabled", "tempoPoints", "tracks", "returnBuses", "sampleRate", "bitDepth", "channelFormat", "groups", "masterDevices", "swingAmount", "customChannelCount", "channelNames"]),
-        "tracks": Set(["id", "name", "kind", "colorIndex", "clips", "audioClips", "devices", "automationLanes", "externalPluginSlots", "pluginTargetID", "sequencerLayers", "armed", "inputMonitor", "audioInputMonitorMode", "audioInputDeviceUID", "audioInputDeviceName", "audioInputChannelIndex", "useStepSequencer", "volume", "pan", "mute", "solo", "sends", "outputBusName", "outputMode", "outputChannelIndex", "panMode", "stereoWidth", "loopDragEnabled", "sequencerPrintSourceTrackID", "sequencerPrintTargetTrackID"]),
+        "tracks": Set(["id", "name", "kind", "colorIndex", "clips", "audioClips", "devices", "automationLanes", "externalPluginSlots", "pluginTargetID", "sequencerLayers", "armed", "inputMonitor", "audioInputMonitorMode", "audioInputDeviceUID", "audioInputDeviceName", "audioInputChannelIndex", "useStepSequencer", "volume", "pan", "mute", "solo", "sends", "outputBusName", "outputMode", "outputChannelIndex", "panMode", "stereoWidth", "loopDragEnabled", "sequencerPrintSourceTrackID", "sequencerPrintTargetTrackID", "groupID", "drumGenre", "stepPattern", "frozen", "bounced"]),
         "sequencerLayers": Set(["id", "name", "source", "note", "steps", "velocity", "samplePath", "pluginTargetID", "octaveOffset", "pan", "volume"]),
         "clips": Set(["id", "name", "startBeat", "lengthBeats", "notes", "isActive", "loopEnabled", "loopLengthBeats"]),
         "notes": Set(["id", "pitch", "start", "length", "velocity"]),
         "audioClips": Set(["id", "startBeat", "samples", "sampleRate", "devices", "externalPluginSlots", "warpEnabled", "warpMode", "originalTempo", "manualTempoOverride", "displayName", "sourceURL", "isActive", "lengthBeatsOverride", "trimStartBeats", "loopEnabled", "loopLengthBeats", "gainDB", "pitchSemitones", "pitchCents"]),
         "devices": Set(["id", "kind", "bypassed", "mono", "params", "sidechainEnabled", "sidechainInputTrackID"]),
+        "bounced": Set(["id", "startBeat", "samples", "sampleRate", "devices", "externalPluginSlots", "warpEnabled", "warpMode", "originalTempo", "manualTempoOverride", "displayName", "sourceURL", "isActive", "lengthBeatsOverride", "trimStartBeats", "loopEnabled", "loopLengthBeats", "gainDB", "pitchSemitones", "pitchCents"]),
         "masterDevices": Set(["id", "kind", "bypassed", "mono", "params", "sidechainEnabled", "sidechainInputTrackID"]),
         "externalPluginSlots": Set(["id", "pluginID", "name", "format", "role", "path", "hosted"]),
         "sends": Set(["id", "returnBusID", "amount", "preFader"]),
