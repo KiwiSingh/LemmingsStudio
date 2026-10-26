@@ -77,3 +77,23 @@ def test_launch_log_precedes_optional_imports_and_stays_in_selected_directory(tm
         assert json.loads(log.report_path.read_text())['status'] == 'testing'
     finally:
         log.close()
+
+
+def test_multimedia_initialization_failure_advances_to_workspace_path(tmp_path, monkeypatch):
+    from lemmings_studio.startup import Startup
+    app = QApplication.instance() or QApplication([])
+    class Log:
+        path = tmp_path/'test.log'
+        def mark(self, *_args, **_kwargs):
+            pass
+    startup = Startup(app, Log(), check_mode=True, root=tmp_path)
+    def fail():
+        raise ImportError('Damaged multimedia dependency')
+    monkeypatch.setattr(startup, '_initialize_media', fail)
+    startup._load_media()
+    assert startup.stage == 'splash'
+    assert startup.errors == ['Damaged multimedia dependency']
+    startup._next()
+    startup.shutdown()
+    startup.qml.deleteLater()
+    app.processEvents()

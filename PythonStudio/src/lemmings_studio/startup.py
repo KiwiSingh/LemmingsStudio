@@ -96,6 +96,13 @@ class Startup(QObject):
 
     @Slot()
     def _load_media(self):
+        try:
+            self._initialize_media()
+        except Exception as error:
+            self.log.mark('multimedia_initialization_error', error=str(error))
+            self._video_error(str(error))
+
+    def _initialize_media(self):
         if self._media_loading or self._finished:
             return
         self._media_loading = True
