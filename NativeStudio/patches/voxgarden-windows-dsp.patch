@@ -159,10 +159,120 @@ index 4888a66..b22b3b4 100644
  }
  void VoxGardenProcessor::setValue(const juce::String& id,float v) {if(auto* p=state.getParameter(id)){p->beginChangeGesture();p->setValueNotifyingHost(p->convertTo0to1(v));p->endChangeGesture();}}
 diff --git a/tests/Checks.cpp b/tests/Checks.cpp
-index 531f7c8..31f1b6d 100644
+index 531f7c8..36cdcbf 100644
 --- a/tests/Checks.cpp
 +++ b/tests/Checks.cpp
-@@ -189,7 +189,13 @@ int main(int argc,char** argv) {
+@@ -8,6 +8,7 @@
+ static int failures=0;
+ static void check(bool pass,const char* message){std::cout<<(pass?"PASS ":"FAIL ")<<message<<std::endl;if(!pass)++failures;}
+ int main(int argc,char** argv) {
++    std::cout << "Starting VoxGarden DSP/state checks" << std::endl;
+     juce::ScopedJuceInitialiser_GUI gui;
+     if(argc>1 && juce::String(argv[1])=="--neural-setup"){
+         check(vg::installSingingHelpers(),"Embedded model helpers install without a separate script package");auto root=vg::singingRoot();int code=vg::runSingingProcess({"/bin/sh",root.getChildFile("bootstrap.sh").getFullPathName(),root.getFullPathName()},root.getChildFile("Setup.log"),[]{return false;},[]{});check(code==0&&vg::singingReady(),"Integrated setup verifies models and confirms Core ML execution");return failures?1:0;
+@@ -20,7 +21,7 @@ int main(int argc,char** argv) {
+         }return failures?1:0;
+     }
+     if(argc>3 && juce::String(argv[1])=="--ai-smoke"){
+-        VoxGardenProcessor p;p.applyPreset(5);p.setValue("root",9);p.setValue("scale",1);p.setValue("aiPrint",1);p.setValue("aiBlend",1);
++        auto pStorage = std::make_unique<VoxGardenProcessor>();auto& p = *pStorage;p.applyPreset(5);p.setValue("root",9);p.setValue("scale",1);p.setValue("aiPrint",1);p.setValue("aiBlend",1);
+         if(argc>4)p.setValue("aiCast",juce::String(argv[4]).getIntValue());
+         if(argc>5)p.setValue("raga",juce::String(argv[5]).getIntValue());
+         auto settings=p.settings();juce::File input{juce::String(argv[2])},output{juce::String(argv[3])};std::atomic<float> progress{0};std::vector<juce::File> singers;
+@@ -57,7 +58,13 @@ int main(int argc,char** argv) {
+             auto file=juce::File::getSpecialLocation(juce::File::tempDirectory).getNonexistentChildFile("VoxGarden melody test",".wav");juce::AudioBuffer<float> audio(1,48000*2);audio.clear();for(int n=0;n<audio.getNumSamples();++n){double seconds=n/48000.;if(seconds<.7||(seconds>=1&&seconds<1.7)){double hz=seconds<.7?293.6647679:261.6255653;audio.setSample(0,n,.25f*std::sin(juce::MathConstants<double>::twoPi*hz*n/48000));}}
+             {juce::WavAudioFormat wav;auto stream=file.createOutputStream();std::unique_ptr<juce::AudioFormatWriter> writer(wav.createWriterFor(stream.release(),48000,1,24,{},0));writer->writeFromAudioSampleBuffer(audio,0,audio.getNumSamples());}
+             vg::Score sketch;auto result=vg::transcribeScore(file,sketch,[]{return false;});check(result.isEmpty()&&sketch.size()==2&&sketch[0].midi==62&&sketch[1].midi==60&&sketch[1].start>sketch[0].start+sketch[0].duration,"Audio pitch sketch detects isolated D4/C4 and retains a rest");file.deleteFile();
+-            auto log=file.withFileExtension(".log");auto start=juce::Time::getMillisecondCounterHiRes();auto code=vg::runSingingProcess({"/bin/sh","-c","sleep 30"},log,[&]{return juce::Time::getMillisecondCounterHiRes()-start>150;},[]{});check(code==-2&&juce::Time::getMillisecondCounterHiRes()-start<2000,"Cancelling setup/render stops the child process group promptly");log.deleteFile();
++            auto log=file.withFileExtension(".log");
++#if JUCE_MAC
++            auto start=juce::Time::getMillisecondCounterHiRes();auto code=vg::runSingingProcess({"/bin/sh","-c","sleep 30"},log,[&]{return juce::Time::getMillisecondCounterHiRes()-start>150;},[]{});check(code==-2&&juce::Time::getMillisecondCounterHiRes()-start<2000,"Cancelling setup/render stops the child process group promptly");
++#else
++            bool polled=false;auto code=vg::runSingingProcess({"unsupported-neural-worker"},log,[]{return false;},[&]{polled=true;});check(code==-1&&!polled&&!log.existsAsFile(),"Unavailable neural runtime fails without launching a worker or touching the log");
++#endif
++            log.deleteFile();
+         }
+         {
+             ScoreGrid grid;grid.setSize(880,220);grid.setText("0\t1\t62\tfirst\n1\t1\t60\tmiddle\n2\t1\t69\tlast",false);grid.createComponentSnapshot(grid.getLocalBounds());
+@@ -73,14 +80,14 @@ int main(int argc,char** argv) {
+             check(drags==1&&copy&&source&&payload==file.getFullPathName()&&clicks==0&&file.loadFileAsString()=="dry source unchanged","Dry transfer sends the original WAV as one native copy drag without a click or render");
+             button.setFile({});button.mouseDown(event({2,2}));button.mouseDrag(event({20,2}));check(!button.isEnabled()&&drags==1,"Dry transfer is disabled without an available dry take");file.deleteFile();
+         }
+-        VoxGardenProcessor p;p.themeAccent=3;{const juce::ScopedLock lock(p.scoreLock);p.scoreDraft=juce::String::fromUTF8("0\t1\t60\tनमस्ते");p.scoreLanguage=1;p.scoreChordMode=2;}juce::MemoryBlock state;p.getStateInformation(state);p.themeAccent=0;p.scoreDraft={};p.setStateInformation(state.getData(),(int)state.getSize());check(p.themeAccent==3&&p.scoreLanguage==1&&p.scoreChordMode==2&&p.scoreDraft.contains(juce::String::fromUTF8("नमस्ते")),"Host state restores accent, multilingual score and lyric language");
++        auto pStorage = std::make_unique<VoxGardenProcessor>();auto& p = *pStorage;p.themeAccent=3;{const juce::ScopedLock lock(p.scoreLock);p.scoreDraft=juce::String::fromUTF8("0\t1\t60\tनमस्ते");p.scoreLanguage=1;p.scoreChordMode=2;}juce::MemoryBlock state;p.getStateInformation(state);p.themeAccent=0;p.scoreDraft={};p.setStateInformation(state.getData(),(int)state.getSize());check(p.themeAccent==3&&p.scoreLanguage==1&&p.scoreChordMode==2&&p.scoreDraft.contains(juce::String::fromUTF8("नमस्ते")),"Host state restores accent, multilingual score and lyric language");
+     }
+     {
+         auto folder=juce::File::getSpecialLocation(juce::File::tempDirectory).getNonexistentChildFile("VoxGarden appearance","",false);folder.createDirectory();auto file=folder.getChildFile("Appearance.json");
+-        VoxGardenProcessor first(file);check(first.setAppearance(1,false),"User theme preference saves atomically");VoxGardenProcessor second(file);check(second.themeAccent==1&&!second.darkMode,"Fresh instance inherits Rose and light mode from disk");
+-        second.themeAccent=2;second.darkMode=true;juce::MemoryBlock old;second.getStateInformation(old);first.setStateInformation(old.getData(),(int)old.getSize());VoxGardenProcessor third(file);check(first.themeAccent==2&&first.darkMode&&third.themeAccent==1&&!third.darkMode,"Project appearance restores without overwriting the global default");
++        auto firstStorage = std::make_unique<VoxGardenProcessor>(file);auto& first = *firstStorage;check(first.setAppearance(1,false),"User theme preference saves atomically");auto secondStorage = std::make_unique<VoxGardenProcessor>(file);auto& second = *secondStorage;check(second.themeAccent==1&&!second.darkMode,"Fresh instance inherits Rose and light mode from disk");
++        second.themeAccent=2;second.darkMode=true;juce::MemoryBlock old;second.getStateInformation(old);first.setStateInformation(old.getData(),(int)old.getSize());auto thirdStorage = std::make_unique<VoxGardenProcessor>(file);auto& third = *thirdStorage;check(first.themeAccent==2&&first.darkMode&&third.themeAccent==1&&!third.darkMode,"Project appearance restores without overwriting the global default");
+         file.replaceWithText("broken json");auto fallback=vg::loadAppearance(file);check(fallback.accent==0&&fallback.dark,"Corrupt appearance preferences safely use defaults");folder.deleteRecursively();
+-        VoxGardenProcessor ensemble;ensemble.applyPreset(62);auto sound=ensemble.settings();check(sound.count==24&&sound.space>.7f&&sound.weird==0&&sound.voice[23].delay!=sound.voice[0].delay,"Abbey Ensemble 24 selects a varied, spacious 24-voice choir");
++        auto ensembleStorage = std::make_unique<VoxGardenProcessor>();auto& ensemble = *ensembleStorage;ensemble.applyPreset(62);auto sound=ensemble.settings();check(sound.count==24&&sound.space>.7f&&sound.weird==0&&sound.voice[23].delay!=sound.voice[0].delay,"Abbey Ensemble 24 selects a varied, spacious 24-voice choir");
+         ensemble.setValue("v24_mute",1);juce::MemoryBlock full;ensemble.getStateInformation(full);ensemble.setChoirSize(3);ensemble.setStateInformation(full.getData(),(int)full.getSize());check(ensemble.settings().count==24&&ensemble.settings().voice[23].mute,"All 24 voices and audition controls restore through host state");
+         check(ensemble.state.getParameter("voiceCount")->getParameterIndex()==54&&ensemble.state.getParameter("raga")->getParameterIndex()==74&&std::abs(ensemble.state.getParameter("voiceCount")->convertTo0to1(3)-2.f/7)<1e-6,"Original parameter indices and 1..8 choir automation normalisation remain unchanged");
+         auto legacy=ensemble.state.copyState();for(int i=legacy.getNumChildren();--i>=0;){auto id=legacy.getChild(i).getProperty("id").toString();if(id=="extraVoices"||(id.startsWith("v")&&id.substring(1).getIntValue()>8))legacy.removeChild(i,nullptr);}juce::MemoryBlock prior;juce::AudioProcessor::copyXmlToBinary(*legacy.createXml(),prior);ensemble.setStateInformation(prior.getData(),(int)prior.getSize());check(ensemble.settings().count==8&&!ensemble.settings().voice[23].mute,"Loading a 2.0 state clears additional voices and stale extra controls");
+@@ -90,12 +97,12 @@ int main(int argc,char** argv) {
+     {
+         auto folder=juce::File::getSpecialLocation(juce::File::tempDirectory).getNonexistentChildFile("VoxGarden 24 stems","",false);folder.createDirectory();auto input=folder.getChildFile("Input.wav");
+         juce::WavAudioFormat wav;juce::AudioBuffer<float> tone(1,24000);for(int i=0;i<24000;++i)tone.setSample(0,i,.12f*std::sin(juce::MathConstants<double>::twoPi*220*i/48000));{auto stream=input.createOutputStream();std::unique_ptr<juce::AudioFormatWriter> writer(wav.createWriterFor(stream.release(),48000,1,24,{},0));writer->writeFromAudioSampleBuffer(tone,0,tone.getNumSamples());}
+-        VoxGardenProcessor choir;choir.applyPreset(62);choir.setValue("v24_solo",1);std::atomic<float> progress{0};auto output=folder.getChildFile("Printed");auto error=renderVocal(input,output,choir.settings(),progress,[]{return false;});bool correct=error.startsWith("Saved mix + 24 stems")&&output.getNumberOfChildFiles(juce::File::findFiles,"*.wav")==25;
++        auto choirStorage = std::make_unique<VoxGardenProcessor>();auto& choir = *choirStorage;choir.applyPreset(62);choir.setValue("v24_solo",1);std::atomic<float> progress{0};auto output=folder.getChildFile("Printed");auto error=renderVocal(input,output,choir.settings(),progress,[]{return false;});bool correct=error.startsWith("Saved mix + 24 stems")&&output.getNumberOfChildFiles(juce::File::findFiles,"*.wav")==25;
+         juce::AudioFormatManager formats;formats.registerBasicFormats();for(int v:{1,24}){std::unique_ptr<juce::AudioFormatReader> reader(formats.createReaderFor(output.getChildFile("Voice "+juce::String(v)+".wav")));if(!reader){correct=false;continue;}juce::AudioBuffer<float> audio(2,(int)reader->lengthInSamples);reader->read(&audio,0,audio.getNumSamples(),0,true,true);correct &= reader->lengthInSamples==216000&&(v==24?audio.getMagnitude(0,audio.getNumSamples())>.001f:audio.getMagnitude(0,audio.getNumSamples())<1e-7f);}
+         check(correct,"24-voice print writes 24 aligned stereo stems with cross-bank solo respected");folder.deleteRecursively();
+     }
+     {
+-        VoxGardenProcessor choir;choir.setValue("root",9);choir.setValue("scale",1);choir.setValue("raga",2);bool valid=true;
++        auto choirStorage = std::make_unique<VoxGardenProcessor>();auto& choir = *choirStorage;choir.setValue("root",9);choir.setValue("scale",1);choir.setValue("raga",2);bool valid=true;
+         for(int preset=65;preset<77;++preset){choir.applyPreset(preset);auto sound=choir.settings();valid &= sound.root==9&&sound.raga==2&&sound.scale==vg::ragaScales[1]&&sound.count>=6&&sound.count<=24&&sound.weird==0;for(auto voice:sound.voice)valid &= voice.delay>=0&&voice.delay<=80&&std::isfinite(voice.formant);}
+         check(valid,"Twelve genre sounds preserve the song root and selected raga with bounded voice settings");
+         choir.applyPreset(67);auto raga=choir.settings();bool octave=false;for(auto voice:raga.voice)octave|=std::abs(voice.degree)==5;check(octave,"Bollywood raga backing uses the selected pentatonic octave rather than seven degrees");
+@@ -113,7 +120,7 @@ int main(int argc,char** argv) {
+     check(vg::degreeNote(60,2,0,0)==64 && vg::degreeNote(60,2,0,1)==63 && vg::degreeNote(60,-7,0,0)==48,"Major/minor thirds and negative degrees");
+     vg::PitchTracker tracker;tracker.prepare(48000);for(int i=0;i<48000;++i)tracker.push(.2f*std::sin(juce::MathConstants<double>::twoPi*220*i/48000));
+     check(tracker.voiced && std::abs(tracker.note-57)<.1f,"YIN detects A3 within 10 cents");
+-    VoxGardenProcessor processor;processor.setRateAndBufferSizeDetails(48000,256);processor.prepareToPlay(48000,256);processor.setValue("root",9);processor.setValue("scale",1);processor.setValue("v3_formant",3.4f);
++    auto processorStorage = std::make_unique<VoxGardenProcessor>();auto& processor = *processorStorage;processor.setRateAndBufferSizeDetails(48000,256);processor.prepareToPlay(48000,256);processor.setValue("root",9);processor.setValue("scale",1);processor.setValue("v3_formant",3.4f);
+     juce::MemoryBlock state;processor.getStateInformation(state);processor.setValue("root",0);processor.setStateInformation(state.getData(),(int)state.getSize());
+     check(processor.settings().root==9 && processor.settings().scale==1 && std::abs(processor.settings().voice[2].formant-3.4f)<.01f,"Full state restores discrete and continuous controls");
+     processor.applyPreset(2);check(processor.settings().root==9 && processor.settings().scale==1,"Starting sounds preserve the chosen key and scale");
+@@ -130,7 +137,7 @@ int main(int argc,char** argv) {
+     }
+     processor.reset();b.clear();processor.processBlock(b,midi);check(b.getMagnitude(0,256)<1e-6f,"Reset removes buffered audio");
+     {
+-        vg::Engine isolated;isolated.prepare(48000);vg::Settings settings;for(auto& v:settings.voice)v.level=0;
++        auto isolatedStorage = std::make_unique<vg::Engine>();auto& isolated = *isolatedStorage;isolated.prepare(48000);vg::Settings settings;for(auto& v:settings.voice)v.level=0;
+         settings.voice[0].level=.5f;settings.voice[0].degree=2;settings.root=9;settings.scale=1;
+         settings.correction=1;settings.detune=settings.vibrato=settings.human=settings.space=0;settings.glide=5;settings.gain=1;
+         juce::AudioBuffer<float> tone(2,48000*2);for(int i=0;i<tone.getNumSamples();++i)for(int c=0;c<2;++c)tone.setSample(c,i,.2f*std::sin(juce::MathConstants<double>::twoPi*220*i/48000));
+@@ -149,7 +156,7 @@ int main(int argc,char** argv) {
+         temp.deleteRecursively();
+     }
+     {
+-        VoxGardenProcessor chord;chord.setRateAndBufferSizeDetails(48000,256);chord.prepareToPlay(48000,256);chord.setValue("mode",1);chord.setValue("space",0);
++        auto chordStorage = std::make_unique<VoxGardenProcessor>();auto& chord = *chordStorage;chord.setRateAndBufferSizeDetails(48000,256);chord.prepareToPlay(48000,256);chord.setValue("mode",1);chord.setValue("space",0);
+         juce::AudioBuffer<float> io(2,256);juce::MidiBuffer events;double before=0,during=0,after=0;
+         for(int k=0;k<320;++k){events.clear();if(k==50)events.addEvent(juce::MidiMessage::noteOn(1,64,(juce::uint8)100),73);if(k==200)events.addEvent(juce::MidiMessage::allNotesOff(1),127);
+             for(int i=0;i<256;++i){float x=.15f*std::sin(juce::MathConstants<double>::twoPi*220*(k*256+i)/48000);io.setSample(0,i,x);io.setSample(1,i,x);}chord.processBlock(io,events);
+@@ -165,14 +172,14 @@ int main(int argc,char** argv) {
+         check(processor.settings().count==8 && !processor.settings().aiPrint && processor.settings().aiBlend==1,"Legacy states retain all eight slots without unexpectedly enabling AI");
+         bool natural=true;for(int preset=5;preset<12;++preset){processor.applyPreset(preset);auto s=processor.settings();natural&=s.weird==0 && s.root==9 && s.scale==1 && s.formantLock && s.count>=2 && s.count<=8;}
+         check(natural,"Seven new natural presets preserve song key and avoid Mutation");
+-        vg::Engine solo;solo.prepare(48000);vg::Settings settings;settings.count=1;settings.space=settings.detune=settings.vibrato=settings.human=0;
++        auto soloStorage = std::make_unique<vg::Engine>();auto& solo = *soloStorage;solo.prepare(48000);vg::Settings settings;settings.count=1;settings.space=settings.detune=settings.vibrato=settings.human=0;
+         juce::AudioBuffer<float> io(2,24000),stems(vg::voices*2,24000);stems.clear();for(int i=0;i<24000;++i)for(int c=0;c<2;++c)io.setSample(c,i,.1f*std::sin(juce::MathConstants<double>::twoPi*220*i/48000));
+         solo.process(io.getWritePointer(0),io.getWritePointer(1),24000,settings,stems.getArrayOfWritePointers());bool muted=true;for(int c=2;c<vg::voices*2;++c)muted&=stems.getMagnitude(c,0,24000)<1e-7f;
+         check(muted && stems.getMagnitude(0,0,24000)>.001f,"Choir size one silences the other seven parts");
+     }
+     {
+         auto folder=juce::File::getSpecialLocation(juce::File::tempDirectory).getNonexistentChildFile("VoxGarden-capture-check","");folder.createDirectory();auto source=folder.getChildFile("Input Vocal.wav");
+-        VoxGardenProcessor channel;channel.setRateAndBufferSizeDetails(48000,256);channel.prepareToPlay(48000,256);channel.setValue("mix",1);channel.setValue("voiceCount",3);channel.setValue("weird",.8f);
++        auto channelStorage = std::make_unique<VoxGardenProcessor>();auto& channel = *channelStorage;channel.setRateAndBufferSizeDetails(48000,256);channel.prepareToPlay(48000,256);channel.setValue("mix",1);channel.setValue("voiceCount",3);channel.setValue("weird",.8f);
+         auto waitFor=[&](TrackCapture::Phase phase){for(int i=0;i<1000;++i){if(channel.capture.getPhase()==phase)return true;juce::Thread::sleep(2);}return false;};
+         check(channel.capture.begin(source)&&waitFor(TrackCapture::recording),"Channel capture arms its background disk writer");
+         juce::AudioBuffer<float> audio(2,256);juce::MidiBuffer events;constexpr int blocks=80;
+@@ -189,7 +196,13 @@ int main(int argc,char** argv) {
      }
      {
          processor.setValue("aiPrint",1);processor.setValue("aiBlend",.7f);juce::MemoryBlock data;processor.getStateInformation(data);processor.setValue("aiPrint",0);processor.setStateInformation(data.getData(),(int)data.getSize());
@@ -177,3 +287,48 @@ index 531f7c8..31f1b6d 100644
          auto folder=juce::File::getSpecialLocation(juce::File::tempDirectory).getNonexistentChildFile("VoxGarden-AI-mix-check","");folder.createDirectory();
          juce::WavAudioFormat wav;juce::AudioBuffer<float> audio(1,48000);std::vector<juce::File> sources;
          for(int k=0;k<2;++k){for(int i=0;i<48000;++i)audio.setSample(0,i,.1f*std::sin(juce::MathConstants<double>::twoPi*(k==0?220:440)*i/48000));auto f=folder.getChildFile(k==0?"input.wav":"ai.wav");auto stream=f.createOutputStream();std::unique_ptr<juce::AudioFormatWriter> w(wav.createWriterFor(stream.release(),48000,1,24,{},0));w->writeFromAudioSampleBuffer(audio,0,48000);if(k==1)sources.push_back(f);}
+@@ -200,7 +213,7 @@ int main(int argc,char** argv) {
+         check(ok,"Native AI mixing preserves singer pitch without a second harmony transposition");reader.reset();folder.deleteRecursively();
+     }
+     {
+-        VoxGardenProcessor monitor;monitor.prepareToPlay(48000,256);monitor.setValue("mix",1);monitor.setValue("gain",.2f);monitor.printInProgress=true;
++        auto monitorStorage = std::make_unique<VoxGardenProcessor>();auto& monitor = *monitorStorage;monitor.prepareToPlay(48000,256);monitor.setValue("mix",1);monitor.setValue("gain",.2f);monitor.printInProgress=true;
+         juce::AudioBuffer<float> b(2,256);juce::MidiBuffer events;float error=0;
+         for(int block=0;block<80;++block){for(int i=0;i<256;++i)for(int ch=0;ch<2;++ch)b.setSample(ch,i,.1f*std::sin((block*256+i)*.031+ch));monitor.processBlock(b,events);
+             for(int i=0;i<256;++i)for(int ch=0;ch<2;++ch){int at=block*256+i-monitor.getLatencySamples();float expected=at<0?0:.1f*std::sin(at*.031+ch);error=std::max(error,std::abs(expected-b.getSample(ch,i)));}}
+@@ -213,7 +226,7 @@ int main(int argc,char** argv) {
+         check(!processor.darkMode.load(),"Theme preference restores from host state without adding sound parameters");processor.darkMode=true;
+     }
+     {
+-        VoxGardenProcessor audition;audition.applyPreset(6);audition.setValue("voiceCount",3);audition.setValue("v1_mute",1);audition.setValue("v2_solo",1);
++        auto auditionStorage = std::make_unique<VoxGardenProcessor>();auto& audition = *auditionStorage;audition.applyPreset(6);audition.setValue("voiceCount",3);audition.setValue("v1_mute",1);audition.setValue("v2_solo",1);
+         auto v=audition.settings();check(!vg::voiceAudible(v,0)&&vg::voiceAudible(v,1)&&!vg::voiceAudible(v,2),"Solo isolates an active choir voice and mute overrides it");
+         audition.setValue("v3_solo",1);v=audition.settings();check(vg::voiceAudible(v,1)&&vg::voiceAudible(v,2),"Multiple solos combine");
+         audition.setValue("v2_mute",1);v=audition.settings();check(!vg::voiceAudible(v,1)&&vg::voiceAudible(v,2),"Muted solo remains silent while another solo plays");
+@@ -237,7 +250,7 @@ int main(int argc,char** argv) {
+         check(isolated,"DSP and AI printed stems isolate soloed voice and retain aligned silent excluded slots");folder.deleteRecursively();
+     }
+     {
+-        VoxGardenProcessor cast;cast.setValue("root",9);cast.setValue("scale",1);cast.applyPreset(28);auto female=cast.settings();
++        auto castStorage = std::make_unique<VoxGardenProcessor>();auto& cast = *castStorage;cast.setValue("root",9);cast.setValue("scale",1);cast.applyPreset(28);auto female=cast.settings();
+         cast.applyPreset(29);auto male=cast.settings();
+         check(female.aiCast==1&&female.voice[0].formant>0&&male.aiCast==2&&male.voice[0].formant<0&&male.voice[0].degree<female.voice[0].degree,"Opposite-register presets change formant, harmony and neural reference cast");
+         cast.applyPreset(34);check(cast.settings().aiCast==3,"Mixed choir preset selects alternating female/male references");
+@@ -249,7 +262,7 @@ int main(int argc,char** argv) {
+         cast.applyPreset(28);cast.applyPreset(7);check(cast.settings().aiCast==0,"Existing factory sounds restore their original reference cast");
+     }
+     {
+-        VoxGardenProcessor raga;raga.setValue("root",0);raga.setValue("scale",1);
++        auto ragaStorage = std::make_unique<VoxGardenProcessor>();auto& raga = *ragaStorage;raga.setValue("root",0);raga.setValue("scale",1);
+         bool valid=true;for(int i=0;i<8;++i){raga.applyPreset(38+i);auto v=raga.settings();valid &= v.root==0&&v.raga==i+1&&v.scale==vg::ragaScales[(size_t)i]&&v.weird==0;
+             for(const auto& voice:v.voice)valid &= vg::inScale(vg::degreeNote(60,voice.degree,v.root,v.scale),v.root,v.scale);}
+         check(valid,"Eight raga presets retain Sa and constrain every voice to the researched note set");
+@@ -270,7 +283,7 @@ int main(int argc,char** argv) {
+         for(int language=1;language<5;++language)check(vg::tr(language,"Render vocal + stems")!="Render vocal + stems"&&vg::tr(language,"Singer 1/2 - synthesis part 1, step 3/20").contains("3/20"),"Translated controls and dynamic synthesis status preserve numbers");
+     }
+     {
+-        VoxGardenProcessor voices;voices.setValue("root",9);voices.setValue("scale",1);voices.setValue("aiPrint",1);voices.setValue("aiBlend",.7f);bool valid=true;
++        auto voicesStorage = std::make_unique<VoxGardenProcessor>();auto& voices = *voicesStorage;voices.setValue("root",9);voices.setValue("scale",1);voices.setValue("aiPrint",1);voices.setValue("aiBlend",.7f);bool valid=true;
+         for(int i=0;i<8;++i)for(int cast=1;cast<=2;++cast){voices.applyPreset((cast==1?46:54)+i);auto sound=voices.settings();int octave=(int)vg::intervals[(size_t)sound.scale].size();
+             valid &= sound.raga==i+1&&sound.root==9&&sound.aiCast==cast&&sound.count==6&&sound.weird==0&&sound.formantLock&&sound.aiPrint&&std::abs(sound.aiBlend-.7f)<.001f;
+             valid &= cast==1?sound.voice[0].formant>0&&sound.voice[0].degree==0:sound.voice[0].formant<0&&sound.voice[0].degree==-octave;

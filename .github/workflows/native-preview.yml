@@ -44,8 +44,10 @@ jobs:
         shell: pwsh
         run: ./NativeStudio/tools/build-vox.ps1 -Destination "$env:RUNNER_TEMP/VoxGarden"
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: voxgarden-windows-dsp-preview
           path: |
             ${{ runner.temp }}/VoxGarden/build/VoxGarden_artefacts/Release/
             ${{ runner.temp }}/VoxGarden/build/VoxGardenCheck_artefacts/Release/
+            ${{ runner.temp }}/VoxGarden/build/Testing/Temporary/
