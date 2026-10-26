@@ -2,7 +2,8 @@ import Foundation
 import SwiftUI
 
 struct ProjectDocument: Codable {
-    var version: Int = 2
+    var version: Int = 3
+    var originalJSON: Data? = nil
     var name: String
     var tempo: Double
     var bpm: Double?
@@ -20,10 +21,14 @@ struct ProjectDocument: Codable {
     var bitDepth: String?
     var channelFormat: String?
     var groups: [TrackGroupDoc]?
+    var masterDevices: [DeviceDoc]?
+    var swingAmount: Double?
+    var customChannelCount: Int?
+    var channelNames: [String]?
 
     enum CodingKeys: String, CodingKey {
         case version, name, tempo, bpm, beatsPerBar, lengthBars, keyRoot, keyName, scaleName, keySnapEnabled
-        case tempoAutomationEnabled, tempoPoints, tracks, returnBuses, sampleRate, bitDepth, channelFormat, groups
+        case tempoAutomationEnabled, tempoPoints, tracks, returnBuses, sampleRate, bitDepth, channelFormat, groups, masterDevices, swingAmount, customChannelCount, channelNames
     }
 
     init(from decoder: Decoder) throws {
@@ -46,6 +51,10 @@ struct ProjectDocument: Codable {
         bitDepth = try c.decodeIfPresent(String.self, forKey: .bitDepth)
         channelFormat = try c.decodeIfPresent(String.self, forKey: .channelFormat)
         groups = try c.decodeIfPresent([TrackGroupDoc].self, forKey: .groups)
+        masterDevices = try c.decodeIfPresent([DeviceDoc].self, forKey: .masterDevices)
+        swingAmount = try c.decodeIfPresent(Double.self, forKey: .swingAmount)
+        customChannelCount = try c.decodeIfPresent(Int.self, forKey: .customChannelCount)
+        channelNames = try c.decodeIfPresent([String].self, forKey: .channelNames)
     }
 
     init(project: Project) {
@@ -65,19 +74,31 @@ struct ProjectDocument: Codable {
         sampleRate = project.sampleRate
         bitDepth = project.bitDepth.rawValue
         channelFormat = project.channelFormat.rawValue
+        originalJSON = project.documentSourceJSON
         groups = project.groups.map(TrackGroupDoc.init)
+        masterDevices = project.masterDevices.map(DeviceDoc.init)
+        swingAmount = project.swingAmount
+        customChannelCount = project.customChannelCount
+        channelNames = project.channelNames
     }
 
     func encoded() throws -> Data {
-        try JSONEncoder.pretty.encode(self)
+        let updated = try JSONEncoder.pretty.encode(self)
+        return try DocumentPreservation.merge(original: originalJSON, updated: updated)
     }
 
     static func decode(_ data: Data) throws -> ProjectDocument {
-        try JSONDecoder().decode(ProjectDocument.self, from: data)
+        var document = try JSONDecoder().decode(ProjectDocument.self, from: data)
+        document.originalJSON = data
+        guard (1...3).contains(document.version) else {
+            throw CocoaError(.coderReadCorrupt, userInfo: [NSLocalizedDescriptionKey: "Unsupported project version. The original file was not modified."])
+        }
+        return document
     }
 
     func makeProject() -> Project {
         let project = Project()
+        project.documentSourceJSON = originalJSON
         project.name = name
         project.tempo = bpm ?? tempo
         project.beatsPerBar = beatsPerBar
@@ -93,6 +114,10 @@ struct ProjectDocument: Codable {
         if let bitDepth { project.bitDepth = ProjectBitDepth(rawValue: bitDepth) ?? .float32 }
         if let channelFormat { project.channelFormat = ProjectChannelFormat(rawValue: channelFormat) ?? .stereo }
         if let groups { project.groups = groups.map { $0.make() } }
+        if let masterDevices { project.masterDevices = masterDevices.map { $0.make() } }
+        if let swingAmount { project.swingAmount = swingAmount }
+        if let customChannelCount { project.customChannelCount = customChannelCount }
+        if let channelNames { project.channelNames = channelNames }
         return project
     }
 }
@@ -113,6 +138,7 @@ struct TempoPointDoc: Codable {
 }
 
 struct TrackDoc: Codable {
+    var id: UUID?
     var name: String
     var kind: String
     var colorIndex: Int
@@ -145,6 +171,7 @@ struct TrackDoc: Codable {
     var sequencerPrintTargetTrackID: UUID?
 
     init(track: Track, index: Int) {
+        id = track.id
         name = track.name
         kind = track.kind.rawValue
         colorIndex = index
@@ -180,6 +207,7 @@ struct TrackDoc: Codable {
     func make(index: Int) -> Track {
         let palette: [Color] = [.blue, .orange, .green, .pink, .purple, .teal, .red, .yellow]
         let track = Track(name: name, kind: InstrumentKind(rawValue: kind) ?? .analog, color: palette[(colorIndex >= 0 ? colorIndex : index) % palette.count])
+        if let id { track.id = id }
         track.clips = clips.map { $0.make(color: track.color) }
         track.audioClips = audioClips.map { $0.make() }
         track.devices = devices.map { $0.make() }
@@ -212,6 +240,7 @@ struct TrackDoc: Codable {
 }
 
 struct SequencerLayerDoc: Codable {
+    var id: UUID?
     var name: String
     var source: String
     var note: Int
@@ -224,6 +253,7 @@ struct SequencerLayerDoc: Codable {
     var volume: Float?
 
     init(_ layer: SequencerLayer) {
+        id = layer.id
         name = layer.name
         source = layer.source.rawValue
         note = layer.note
@@ -247,12 +277,14 @@ struct SequencerLayerDoc: Codable {
                                    octaveOffset: octaveOffset ?? 0,
                                    pan: pan ?? 0,
                                    volume: volume ?? 1)
+        if let id { layer.id = id }
         layer.steps = steps
         return layer
     }
 }
 
 struct ClipDoc: Codable {
+    var id: UUID?
     var name: String
     var startBeat: Double
     var lengthBeats: Double
@@ -261,6 +293,7 @@ struct ClipDoc: Codable {
     var loopEnabled: Bool?
     var loopLengthBeats: Double?
     init(_ clip: Clip) {
+        id = clip.id
         name = clip.name
         startBeat = clip.startBeat
         lengthBeats = clip.lengthBeats
@@ -271,6 +304,7 @@ struct ClipDoc: Codable {
     }
     func make(color: Color) -> Clip {
         let c = Clip(name: name, startBeat: startBeat, lengthBeats: lengthBeats, notes: notes.map { $0.make() }, color: color)
+        if let id { c.id = id }
         c.isActive = isActive ?? true
         c.loopEnabled = loopEnabled ?? true
         c.loopLengthBeats = loopLengthBeats ?? lengthBeats
@@ -279,15 +313,17 @@ struct ClipDoc: Codable {
 }
 
 struct ClipNoteDoc: Codable {
+    var id: UUID?
     var pitch: Int
     var start: Double
     var length: Double
     var velocity: Float
-    init(_ n: ClipNote) { pitch = n.pitch; start = n.start; length = n.length; velocity = n.velocity }
-    func make() -> ClipNote { ClipNote(pitch: pitch, start: start, length: length, velocity: velocity) }
+    init(_ n: ClipNote) { id = n.id; pitch = n.pitch; start = n.start; length = n.length; velocity = n.velocity }
+    func make() -> ClipNote { var note = ClipNote(pitch: pitch, start: start, length: length, velocity: velocity); if let id { note.id = id }; return note }
 }
 
 struct AudioClipDoc: Codable {
+    var id: UUID?
     var startBeat: Double
     var samples: [Float]
     var sampleRate: Double
@@ -309,6 +345,7 @@ struct AudioClipDoc: Codable {
     var pitchCents: Double?
 
     init(_ clip: AudioClip) {
+        id = clip.id
         startBeat = clip.startBeat
         samples = clip.samples
         sampleRate = clip.sampleRate
@@ -331,6 +368,7 @@ struct AudioClipDoc: Codable {
     }
     func make() -> AudioClip {
         let clip = AudioClip(startBeat: startBeat, samples: samples, sampleRate: sampleRate)
+        if let id { clip.id = id }
         clip.devices = devices.map { $0.make() }
         clip.externalPluginSlots = externalPluginSlots.map { $0.make() }
         clip.warpEnabled = warpEnabled
@@ -352,6 +390,7 @@ struct AudioClipDoc: Codable {
 }
 
 struct DeviceDoc: Codable {
+    var id: UUID?
     var kind: String
     var bypassed: Bool
     var mono: Bool
@@ -359,6 +398,7 @@ struct DeviceDoc: Codable {
     var sidechainEnabled: Bool?
     var sidechainInputTrackID: UUID?
     init(_ device: DeviceModel) {
+        id = device.id
         kind = device.kind.rawValue
         bypassed = device.bypassed
         mono = device.mono
@@ -368,6 +408,7 @@ struct DeviceDoc: Codable {
     }
     func make() -> DeviceModel {
         let d = DeviceModel(kind: DeviceKind(rawValue: kind) ?? .reverb, params: params)
+        if let id { d.id = id }
         d.bypassed = bypassed
         d.mono = mono
         d.sidechainEnabled = sidechainEnabled ?? false
@@ -377,6 +418,7 @@ struct DeviceDoc: Codable {
 }
 
 struct ExternalPluginSlotDoc: Codable {
+    var id: UUID?
     var pluginID: String
     var name: String
     var format: String
@@ -384,6 +426,7 @@ struct ExternalPluginSlotDoc: Codable {
     var path: String?
     var hosted: Bool
     init(_ slot: ExternalPluginSlot) {
+        id = slot.id
         pluginID = slot.pluginID
         name = slot.name
         format = slot.format.rawValue
@@ -401,17 +444,20 @@ struct ExternalPluginSlotDoc: Codable {
             role: PluginRole(rawValue: role) ?? .unknown,
             path: path
         )
-        return ExternalPluginSlot(plugin: plugin, hosted: hosted)
+        var slot = ExternalPluginSlot(plugin: plugin, hosted: hosted)
+        if let id { slot.id = id }
+        return slot
     }
 }
 
 
 struct SendDoc: Codable {
+    var id: UUID?
     var returnBusID: UUID
     var amount: Float
     var preFader: Bool
-    init(_ send: SendSlot) { returnBusID = send.returnBusID; amount = send.amount; preFader = send.preFader }
-    func make() -> SendSlot { SendSlot(returnBusID: returnBusID, amount: amount, preFader: preFader) }
+    init(_ send: SendSlot) { id = send.id; returnBusID = send.returnBusID; amount = send.amount; preFader = send.preFader }
+    func make() -> SendSlot { var send = SendSlot(returnBusID: returnBusID, amount: amount, preFader: preFader); if let id { send.id = id }; return send }
 }
 
 struct ReturnBusDoc: Codable {
@@ -446,6 +492,7 @@ struct AutomationLaneDoc: Codable {
 }
 
 struct TrackGroupDoc: Codable {
+    var id: UUID?
     var name: String
     var trackIDs: [UUID]
     var devices: [DeviceDoc]
@@ -454,6 +501,6 @@ struct TrackGroupDoc: Codable {
     var mute: Bool
     var solo: Bool
     var automationLanes: [AutomationLaneDoc]?
-    init(_ group: TrackGroup) { name = group.name; trackIDs = group.trackIDs; devices = group.devices.map(DeviceDoc.init); volume = group.volume; pan = group.pan; mute = group.mute; solo = group.solo; automationLanes = group.automationLanes.map(AutomationLaneDoc.init) }
-    func make() -> TrackGroup { TrackGroup(name: name, trackIDs: trackIDs, devices: devices.map { $0.make() }, volume: volume, pan: pan, mute: mute, solo: solo, automationLanes: automationLanes?.map { $0.make() } ?? []) }
+    init(_ group: TrackGroup) { id = group.id; name = group.name; trackIDs = group.trackIDs; devices = group.devices.map(DeviceDoc.init); volume = group.volume; pan = group.pan; mute = group.mute; solo = group.solo; automationLanes = group.automationLanes.map(AutomationLaneDoc.init) }
+    func make() -> TrackGroup { TrackGroup(id: id ?? UUID(), name: name, trackIDs: trackIDs, devices: devices.map { $0.make() }, volume: volume, pan: pan, mute: mute, solo: solo, automationLanes: automationLanes?.map { $0.make() } ?? []) }
 }

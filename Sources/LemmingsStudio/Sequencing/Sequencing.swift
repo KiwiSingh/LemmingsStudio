@@ -5,7 +5,7 @@ import SwiftUI
 // MARK: - Notes & clips
 
 public struct ClipNote: Identifiable, Hashable {
-    public let id = UUID()
+    public internal(set) var id = UUID()
     public var pitch: Int        // MIDI number
     public var start: Double     // beats from clip start
     public var length: Double    // beats
@@ -16,7 +16,7 @@ public struct ClipNote: Identifiable, Hashable {
 }
 
 @Observable public final class Clip: Identifiable {
-    public let id = UUID()
+    public internal(set) var id = UUID()
     public var name: String
     public var isActive: Bool = true
     public var startBeat: Double        // position on the arrangement timeline
@@ -139,7 +139,7 @@ public struct Step: Hashable {
 // MARK: - Mixer routing: sends, returns, buses, groups
 
 public struct SendSlot: Identifiable, Hashable, Sendable {
-    public let id = UUID()
+    public internal(set) var id = UUID()
     public var returnBusID: UUID
     public var amount: Float
     public var preFader: Bool
@@ -217,7 +217,7 @@ public enum SequencerLayerSource: String, CaseIterable, Identifiable, Sendable {
 }
 
 public struct SequencerLayer: Identifiable, Hashable, Sendable {
-    public let id = UUID()
+    public internal(set) var id = UUID()
     public var name: String
     public var source: SequencerLayerSource
     public var note: Int
@@ -321,7 +321,7 @@ public struct SequencerLayer: Identifiable, Hashable, Sendable {
 
 
 public struct ExternalPluginSlot: Identifiable, Hashable, Sendable {
-    public let id = UUID()
+    public internal(set) var id = UUID()
     public var pluginID: String
     public var name: String
     public var format: PluginFormat
@@ -370,7 +370,7 @@ public enum AudioInputMonitorMode: String, Codable, CaseIterable, Identifiable {
 }
 
 @Observable public final class Track: Identifiable {
-    public let id = UUID()
+    public internal(set) var id = UUID()
     public var name: String
     public var kind: InstrumentKind
     public var clips: [Clip] = []
@@ -450,7 +450,7 @@ public enum AudioInputMonitorMode: String, Codable, CaseIterable, Identifiable {
 /// track.audioClips) forces the arrangement to re-read the clip. Observability makes
 /// the take's waveform and length appear the instant it's committed.
 @Observable public final class AudioClip: Identifiable {
-    public let id = UUID()
+    public internal(set) var id = UUID()
     public var startBeat: Double
     public var isActive: Bool = true
     public var samples: [Float]
@@ -549,6 +549,8 @@ public enum ProjectBitDepth: String, CaseIterable, Identifiable, Sendable {
 // MARK: - Project
 
 @Observable public final class Project {
+    // Original portable document is retained only for lossless unknown-field merging.
+    public var documentSourceJSON: Data? = nil
     public var name = "Untitled"
     public var tempo: Double = 124
     public var swingAmount: Double = 0
