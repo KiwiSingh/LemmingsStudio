@@ -7,12 +7,13 @@ an optional desktop shortcut. Python and the required native libraries are bundl
 It installs separately from existing LemmingsStudio applications and does not
 change file associations, projects, presets, models or external DAW settings.
 
-The initial workspace includes arrangement and MIDI editing, a sequencer, mixer,
+The Qt Quick workspace includes all seven pages, shared-project and MIDI editing,
+a sequencer using original Mac drum voices, mixer controls,
 playback, and WAV export. It is not yet equivalent to the macOS application's
 full feature set. Recording, plugin hosting, routing, effects and AI workflows
 are still being ported. Existing project formats are not silently converted.
 
-Use .lemmingspy for projects made in this branch. Keep the existing builds and
+Use .lemmingsproject for projects made in this branch. Keep the existing builds and
 original projects while the new Windows implementation is validated.
 
 License notices are bundled with the libraries. Source/ contains matching source

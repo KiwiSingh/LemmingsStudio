@@ -43,3 +43,28 @@ def test_kick_and_sub_are_distinct_native_voices(engine):
     sub = engine.render_drum(1, 48000, 48000)
     assert not np.array_equal(kick, sub)
     assert np.mean(kick[24000:]**2) < np.mean(sub[24000:]**2)
+
+
+@pytest.mark.parametrize('rate',[44100,48000,96000])
+def test_actual_swift_kit_retrigger_parity(engine,rate):
+    from lemmings_studio.workspace_audio import REFERENCE
+    root=os.environ.get('LEMMINGS_SWIFT_DRUM_REFERENCE')
+    if not root:pytest.skip('Requires real Swift kit reference')
+    reference=np.fromfile(Path(root)/f'kit-{rate}.f32',dtype='<f4')
+    events=[(i*int(rate*.007),i%10,.5+(i%5)*.1) for i in range(80)]
+    result=engine.render_kit(rate,len(reference),events,REFERENCE['drumKits']['Rock'])
+    np.testing.assert_allclose(result,reference,atol=3e-6,rtol=3e-5)
+
+
+@pytest.mark.parametrize('rate',[44100,48000,96000])
+@pytest.mark.parametrize('profile',[0,1])
+def test_original_master_limiter(engine,rate,profile):
+    root=os.environ.get('LEMMINGS_SWIFT_DRUM_REFERENCE')
+    if not root:pytest.skip('Requires real Swift limiter reference')
+    root=Path(root)
+    signal=np.fromfile(root/f'limiter-input-{rate}.f32',dtype='<f4').reshape(-1,2)
+    reference=np.fromfile(root/f'limiter-{rate}-{profile}.f32',dtype='<f4').reshape(-1,2)
+    params=dict(ceiling=-.3,threshold=-1,release=90,lookahead=3,softclip=.15,output=0)
+    if profile:params.update(ceiling=-2,threshold=-8,release=120,lookahead=5,softclip=.7,output=-1)
+    result=engine.apply_limiter(signal,rate,params)
+    np.testing.assert_allclose(result,reference,atol=3e-6,rtol=3e-5)

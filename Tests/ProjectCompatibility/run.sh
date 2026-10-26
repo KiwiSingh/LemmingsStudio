@@ -6,6 +6,7 @@ export CLANG_MODULE_CACHE_PATH="$LEMMINGS_TEST_OUTPUT/clang-modules"
 export SWIFT_MODULECACHE_PATH="$LEMMINGS_TEST_OUTPUT/swift-modules"
 swiftc -swift-version 5 -module-cache-path "$SWIFT_MODULECACHE_PATH" \
  Sources/LemmingsStudio/Theory/*.swift \
+ Sources/LemmingsStudio/Views/LemmingsTheme.swift \
  Sources/LemmingsStudio/Instruments/*.swift \
  Sources/LemmingsStudio/Effects/*.swift \
  Sources/LemmingsStudio/Sequencing/*.swift \

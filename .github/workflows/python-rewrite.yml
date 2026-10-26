@@ -79,10 +79,12 @@ jobs:
             python-test-results.xml
             ${{ runner.temp }}/python-preview/bundle-smoke.json
             ${{ runner.temp }}/python-preview/startup-check.json
+            ${{ runner.temp }}/python-preview/workspace-evidence/
             ${{ runner.temp }}/python-preview/launch-diagnostics/launch-*.log
             ${{ runner.temp }}/python-preview/launch-diagnostics/*-video.png
             ${{ runner.temp }}/python-preview/launch-diagnostics/*-splash.png
             ${{ runner.temp }}/python-preview/lifecycle/*.json
+            ${{ runner.temp }}/python-preview/lifecycle/workspace-evidence/
             ${{ runner.temp }}/python-preview/lifecycle/launch-diagnostics/*.png
             ${{ runner.temp }}/python-preview/lifecycle/launch-diagnostics/*.log
             ${{ runner.temp }}/python-preview/lifecycle/*.log

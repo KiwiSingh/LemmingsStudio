@@ -142,7 +142,7 @@ class AudioEngine:
         self._stop.set()
         self.generation += 1
 
-    def play(self, project: Project, base: Path, start_beat: float = 0) -> None:
+    def play(self, project: Project, base: Path, start_beat: float = 0, renderer_factory=None) -> None:
         old_thread = self._thread
         self._stop.set()
         stopped = Event()
@@ -158,7 +158,7 @@ class AudioEngine:
                 if stopped.is_set():
                     return
                 import sounddevice as sd
-                renderer = Renderer(snapshot, base)
+                renderer = (renderer_factory or Renderer)(snapshot, base)
                 position = max(0, round(start_beat*60/snapshot.tempo*renderer.rate))
                 with sd.OutputStream(samplerate=renderer.rate, channels=2, dtype="float32", blocksize=2048, latency="high", device=device) as stream:
                     while position < renderer.length and not stopped.is_set():

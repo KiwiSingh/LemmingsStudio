@@ -1,4 +1,6 @@
 import Foundation
+import SwiftUI
+import AppKit
 
 func require(_ condition: @autoclosure () -> Bool, _ message: String) {
     if !condition() { fatalError(message) }
@@ -103,3 +105,69 @@ for rate in [44100.0, 48000.0, 96000.0] {
     }
 }
 print("PASS: Exported all ten actual Swift drum voices at three sample rates and two parameter profiles")
+
+// Export exact visual/parameter reference values for the Python presentation.
+var workspaceReference: [String: Any] = [:]
+var themeRows: [[String: Any]] = []
+for theme in LemmingsVisualTheme.allCases {
+    let p = LSTheme.palette(for: theme)
+    let fields: [(String, Color)] = [("backgroundA",p.backgroundA),("backgroundB",p.backgroundB),("backgroundC",p.backgroundC),("glowA",p.glowA),("glowB",p.glowB),("panel",p.panel),("panel2",p.panel2),("grid",p.grid),("text",p.text),("dim",p.dim),("play",p.play),("record",p.record),("focus",p.focus),("glassStroke",p.glassStroke),("glassHighlight",p.glassHighlight)]
+    var palette: [String: String] = [:]
+    for (key, value) in fields {
+        let color = NSColor(value).usingColorSpace(.sRGB)!
+        palette[key] = String(format: "#%02x%02x%02x%02x", Int((color.alphaComponent*255).rounded()), Int((color.redComponent*255).rounded()), Int((color.greenComponent*255).rounded()), Int((color.blueComponent*255).rounded()))
+    }
+    themeRows.append(["name":theme.rawValue,"glyph":theme.logoGlyph,"palette":palette])
+}
+workspaceReference["themes"] = themeRows
+workspaceReference["trackColors"] = [Color.blue,Color.orange,Color.green,Color.pink,Color.purple,Color.teal,Color.red,Color.yellow].map { value -> String in
+    let c=NSColor(value).usingColorSpace(.sRGB)!
+    return String(format:"#%02x%02x%02x",Int((c.redComponent*255).rounded()),Int((c.greenComponent*255).rounded()),Int((c.blueComponent*255).rounded()))
+}
+workspaceReference["devices"] = DeviceKind.allCases.map { kind -> [String: Any] in
+    let params = kind.isBuiltInTrackInstrument ? DeviceFactory.builtInInstrumentParams(for: kind) : DeviceFactory.make(kind).automatableParams
+    return ["kind":kind.rawValue,"role":kind.role.rawValue,"category":kind.browserCategory,
+            "defaults":DeviceFactory.defaults(for: kind),"params":params.map { ["id":$0.id,"name":$0.name,"min":$0.min,"max":$0.max,"unit":$0.unit,"log":$0.isLog] as [String: Any] }]
+}
+workspaceReference["scales"] = ScaleLibrary.all.map { ["name": $0.name, "intervals": $0.intervals] as [String: Any] }
+workspaceReference["drumKits"] = Dictionary(uniqueKeysWithValues: DrumGenre.allCases.map { genre in
+    (genre.rawValue, Dictionary(uniqueKeysWithValues: DrumKitLibrary.params(for: genre).map { id, p in
+        (String(id.rawValue), ["tune":p.tune,"decay":p.decay,"tone":p.tone,"drive":Double(p.drive),"level":Double(p.level)])
+    }))
+})
+let referenceBytes = try JSONSerialization.data(withJSONObject: workspaceReference, options: [.prettyPrinted, .sortedKeys])
+try referenceBytes.write(to: output.deletingLastPathComponent().appendingPathComponent("workspace-reference.json"))
+print("PASS: Exported original themes, device parameters and drum kits")
+
+// Reused 24-voice slots retain noise RNG; repeated hits must match real kit behavior.
+for rate in [44100.0,48000.0,96000.0] {
+    let kit = DrumKit(genre: .rock, sampleRate: rate)
+    let strideFrames = Int(rate * 0.007)
+    var samples: [Float] = []
+    for frame in 0..<Int(rate) {
+        if frame % strideFrames == 0 && frame / strideFrames < 80 {
+            let hit = frame / strideFrames
+            kit.hit(DrumVoiceID(rawValue: hit % 10)!, velocity: Float(0.5 + Double(hit % 5) * 0.1))
+        }
+        var value: Float = 0
+        kit.render(into: &value, frames: 1)
+        samples.append(value)
+    }
+    try samples.withUnsafeBufferPointer { Data(buffer: $0) }.write(to: audioDirectory.appendingPathComponent("kit-\(Int(rate)).f32"))
+}
+print("PASS: Exported actual Swift kit with 80 overlapping/retriggered hits")
+
+for rate in [44100.0,48000.0,96000.0] {
+    for profile in 0...1 {
+        let limiter=LimiterEffect();limiter.setSampleRate(rate)
+        if profile == 1 {limiter.ceilingDB = -2;limiter.thresholdDB = -8;limiter.releaseMS = 120;limiter.lookaheadMS = 5;limiter.softClip = 0.7;limiter.outputDB = -1}
+        var left=(0..<Int(rate / 4)).map { Float(sin(Double($0) * 0.13) * 2.1) }
+        var right=(0..<left.count).map { Float(cos(Double($0) * 0.17) * 1.8) }
+        let input=zip(left,right).flatMap { [$0,$1] }
+        try input.withUnsafeBufferPointer { Data(buffer:$0) }.write(to:audioDirectory.appendingPathComponent("limiter-input-\(Int(rate)).f32"))
+        left.withUnsafeMutableBufferPointer { l in right.withUnsafeMutableBufferPointer { r in limiter.process(l.baseAddress!,r.baseAddress!,frames:l.count) } }
+        let stereo=zip(left,right).flatMap { [$0,$1] }
+        try stereo.withUnsafeBufferPointer { Data(buffer:$0) }.write(to:audioDirectory.appendingPathComponent("limiter-\(Int(rate))-\(profile).f32"))
+    }
+}
+print("PASS: Exported original stereo master limiter at three rates/two profiles")

@@ -102,8 +102,8 @@ def main():
                 if self.completed:
                     return
                 try:
-                    from .ui import MainWindow
-                    self.window = MainWindow()
+                    from .workspace import WorkspaceWindow
+                    self.window = WorkspaceWindow()
                     log.mark('workspace_constructed')
                     self.handover()
                 except Exception as error:
@@ -121,6 +121,13 @@ def main():
                 result['checks']['workspace_visible'] = bool(self.window and self.window.isVisible())
                 if not result['checks']['workspace_visible']:
                     result['status'] = 'failed'
+                try:
+                    from .workspace_checks import verify
+                    result['workspace'] = verify(self.window, args.startup_check_report.parent/'workspace-evidence')
+                except Exception as error:
+                    result['status'] = 'failed'
+                    result['workspace_error'] = str(error)
+                    log.error('workspace_check_failed', error)
                 self.exit_code = 0 if result['status'] == 'passed' else 1
                 args.startup_check_report.parent.mkdir(parents=True, exist_ok=True)
                 payload = log.write_report(**result)

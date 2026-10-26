@@ -101,7 +101,7 @@ Implemented in this change:
 - An actual Swift → Python edit/save → Swift read/save → Python check, plus
   Windows CI comparisons against the same Mac-generated fixtures.
 
-Not completed: canonical project integration into the preview UI, all other
+Historical status before the workspace phase: canonical project integration into the preview UI, all other
 omitted musical state, sample-layer portability, unavailable-device placeholders,
 Qt Quick/branding integration, live native audio graph, all other stock DSP,
 production workflows and VoxGarden device integration. The old preview renderer
@@ -142,3 +142,11 @@ Phase timings, screenshots and log paths are retained. This verifies startup,
 not all-workspace appearance, native hardware sound, cold-launch performance or
 full Windows parity. Exact platform blur/shadow/typography comparison remains part
 of visual acceptance; the original artwork is unchanged.
+
+## Workspace phase
+
+Normal startup now opens the Qt Quick workspace and edits the shared project
+directly. All seven pages, original themes, drum kit and master limiter are
+implemented/tested to the extent recorded in [WORKSPACE_UI.md](WORKSPACE_UI.md).
+That ledger supersedes the earlier UI-pending statements above. Full workspace
+and backend acceptance remains open; it lists the outstanding interactions.

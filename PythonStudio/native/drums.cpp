@@ -2,6 +2,8 @@
 #include "drums.h"
 #include <cmath>
 #include <initializer_list>
+#include <array>
+#include <algorithm>
 #include <numbers>
 namespace {
 class DrumVoice {
@@ -18,7 +20,11 @@ class DrumVoice {
     }
     float env(double tau) const noexcept { return float(std::exp(-t/(tau*p.decay))); }
 public:
-    DrumVoice(std::uint32_t voice, double rate, LSDrumParams params): sr(rate), id(voice), p(params) {}
+    DrumVoice(std::uint32_t voice=0, double rate=48000, LSDrumParams params={1.,1.,1.,1.f,1.f,.8f}): sr(rate), id(voice), p(params) {}
+    void stop() noexcept { active = false; }
+    void trigger(std::uint32_t voice, double rate, LSDrumParams params) noexcept {
+        id=voice; sr=rate; p=params; t=0; phase=0; noiseLP=0; active=true;
+    }
     float render() noexcept {
         if (!active) return 0;
         const double dt = 1.0/sr, pi = std::numbers::pi;
@@ -97,5 +103,55 @@ int ls_render_drum(std::uint32_t voice, double rate, const LSDrumParams* p,
         !std::isfinite(p->velocity) || p->velocity < 0 || p->velocity > 1) return -1;
     DrumVoice state(voice, rate, *p);
     for (std::uint32_t i = 0; i < frames; ++i) output[i] = state.render();
+    return 0;
+}
+
+int ls_render_drum_kit(double rate, const LSDrumParams* params,
+                       const LSDrumEvent* events, std::uint32_t count,
+                       float master, float* output, std::uint32_t frames) noexcept {
+    if (!params || !output || (count && !events) || !std::isfinite(rate) || rate < 8000 || rate > 192000 ||
+        !std::isfinite(master) || master < 0 || master > 1.5f) return -1;
+    float probe;
+    for (std::uint32_t v=0; v<10; ++v) if (ls_render_drum(v,rate,params+v,&probe,0)) return -1;
+    for (std::uint32_t i=0; i<count; ++i) {
+        if (events[i].voice>9 || !std::isfinite(events[i].velocity) || events[i].velocity<0 || events[i].velocity>1 ||
+            (i && events[i].frame<events[i-1].frame)) return -1;
+    }
+    std::array<DrumVoice,24> voices;
+    for (auto& voice:voices) voice.stop();
+    std::uint32_t event=0, next=0;
+    for (std::uint32_t frame=0; frame<frames; ++frame) {
+        while (event<count && events[event].frame==frame) {
+            const auto& hit=events[event++];
+            auto p=params[hit.voice]; p.velocity=hit.velocity;
+            voices[next].trigger(hit.voice,rate,p); next=(next+1)%voices.size();
+        }
+        float sum=0;
+        for (auto& voice:voices) sum+=voice.render();
+        output[frame]=std::tanh(sum*.8f)*master;
+    }
+    return 0;
+}
+
+int ls_apply_limiter(float* stereo, std::uint32_t frames, double rate, const double* p) noexcept {
+    if (!stereo || !p || !std::isfinite(rate) || rate<8000 || rate>192000) return -1;
+    for (int i=0;i<6;++i) if (!std::isfinite(p[i])) return -1;
+    if (p[0]<-60 || p[0]>6 || p[1]<-60 || p[1]>6 || p[2]<1 || p[2]>5000 || p[3]<0 || p[3]>100 || p[4]<0 || p[4]>1 || p[5]<-60 || p[5]>24) return -1;
+    std::array<float,8192> left{},right{};
+    const auto count=std::max(1,std::min(8192,int(rate*std::max(0.,p[3])*.001)));
+    const float ceiling=float(std::pow(10.,p[0]/20.)),threshold=float(std::pow(10.,p[1]/20.)),out=float(std::pow(10.,p[5]/20.));
+    const float release=float(std::exp(-1./(std::max(1.,p[2])*.001*rate)));
+    const float drive=std::max(.0001f,ceiling/std::max(.0001f,threshold)),blend=float(p[4]);
+    float gain=1.;int index=0;
+    for (std::uint32_t i=0;i<frames;++i) {
+        const float inL=stereo[2*i],inR=stereo[2*i+1],delayedL=left[index],delayedR=right[index];
+        left[index]=inL;right[index]=inR;index=(index+1)%count;
+        const float peak=std::max(std::abs(inL),std::abs(inR))*drive;
+        const float target=peak>ceiling ? ceiling/std::max(peak,.000001f) : 1.f;
+        gain=target<gain ? target : target+release*(gain-target);
+        float l=delayedL*drive*gain,r=delayedR*drive*gain;
+        if(blend>0){const float cl=std::tanh(l/std::max(.0001f,ceiling))*ceiling,cr=std::tanh(r/std::max(.0001f,ceiling))*ceiling;l=l*(1-blend)+cl*blend;r=r*(1-blend)+cr*blend;}
+        stereo[2*i]=std::max(-ceiling,std::min(ceiling,l))*out;stereo[2*i+1]=std::max(-ceiling,std::min(ceiling,r))*out;
+    }
     return 0;
 }

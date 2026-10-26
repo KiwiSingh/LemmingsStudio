@@ -9,6 +9,13 @@ $repositoryRoot = Split-Path $PSScriptRoot -Parent
 & python "$repositoryRoot/tools/stage_startup_resources.py" --output $mediaRoot
 if ($LASTEXITCODE -ne 0) { throw 'Original startup resource staging failed.' }
 New-Item -ItemType Directory -Force $OutputRoot | Out-Null
+$nativeRoot = Join-Path $OutputRoot 'native-audio'
+& cmake -S "$PSScriptRoot/native" -B $nativeRoot -A x64
+if ($LASTEXITCODE -ne 0) { throw 'Native audio configure failed.' }
+& cmake --build $nativeRoot --config Release
+if ($LASTEXITCODE -ne 0) { throw 'Native audio build failed.' }
+$nativeLibrary = Join-Path $nativeRoot 'Release/lemmings_audio.dll'
+if (!(Test-Path $nativeLibrary)) { throw 'Native drum engine is missing.' }
 $arguments = @(
     '-m','PyInstaller','--noconfirm','--clean','--windowed','--onedir',
     '--name','LemmingsStudio Windows Preview',
@@ -18,6 +25,7 @@ $arguments = @(
     '--copy-metadata','PySide6-Essentials','--copy-metadata','PySide6-Addons','--copy-metadata','shiboken6',
     '--collect-data','lemmings_studio',
     '--add-data',"${mediaRoot}:startup-media",
+    '--add-data',"${nativeLibrary}:native-audio",
     '--copy-metadata','numpy','--copy-metadata','soundfile',
     '--copy-metadata','sounddevice','--copy-metadata','cffi',
     '--copy-metadata','pycparser',
