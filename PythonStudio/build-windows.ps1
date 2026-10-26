@@ -4,6 +4,10 @@ if ($env:OS -ne 'Windows_NT') { throw 'Build the Windows bundle on Windows x64.'
 $OutputRoot = [IO.Path]::GetFullPath($OutputRoot)
 $buildRoot = Join-Path $OutputRoot 'intermediate'
 $applicationRoot = Join-Path $OutputRoot 'application'
+$mediaRoot = Join-Path $OutputRoot 'startup-media'
+$repositoryRoot = Split-Path $PSScriptRoot -Parent
+& python "$repositoryRoot/tools/stage_startup_resources.py" --output $mediaRoot
+if ($LASTEXITCODE -ne 0) { throw 'Original startup resource staging failed.' }
 New-Item -ItemType Directory -Force $OutputRoot | Out-Null
 $arguments = @(
     '-m','PyInstaller','--noconfirm','--clean','--windowed','--onedir',
@@ -11,7 +15,9 @@ $arguments = @(
     '--distpath',$applicationRoot,'--workpath',$buildRoot,'--specpath',$buildRoot,
     '--paths',"$PSScriptRoot/src",
     '--collect-all','_sounddevice_data','--collect-all','_soundfile_data',
-    '--copy-metadata','PySide6-Essentials','--copy-metadata','shiboken6',
+    '--copy-metadata','PySide6-Essentials','--copy-metadata','PySide6-Addons','--copy-metadata','shiboken6',
+    '--collect-data','lemmings_studio',
+    '--add-data',"${mediaRoot}:startup-media",
     '--copy-metadata','numpy','--copy-metadata','soundfile',
     '--copy-metadata','sounddevice','--copy-metadata','cffi',
     '--copy-metadata','pycparser',
@@ -34,3 +40,25 @@ if ($result.status -ne 'passed') { throw 'Bundle did not report successful check
 Copy-Item "$PSScriptRoot/README.md" (Join-Path $applicationRoot 'README.md')
 Get-FileHash $app -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLowerInvariant())  LemmingsStudio Windows Preview/LemmingsStudio Windows Preview.exe" } | Set-Content (Join-Path $applicationRoot 'SHA256SUMS.txt') -Encoding ascii
 Get-Content $report
+
+# Offscreen checks cannot establish that the actual Windows presentation opens.
+$startupReport = Join-Path $OutputRoot 'startup-check.json'
+$previousPlatform = $env:QT_QPA_PLATFORM
+try {
+    $env:QT_QPA_PLATFORM = 'windows'
+    $env:LEMMINGS_DIAGNOSTICS_DIR = Join-Path $OutputRoot 'launch-diagnostics'
+    $env:QML_DISK_CACHE_PATH = Join-Path $OutputRoot 'qml-cache'
+    $startup = Start-Process $app -ArgumentList @('--software-rendering','--startup-check-report',"`"$startupReport`"") -PassThru
+    if (!$startup.WaitForExit(120000)) { $startup.Kill(); throw 'Real Windows startup check timed out.' }
+    if ($startup.ExitCode -ne 0) {
+        if (Test-Path $startupReport) { Get-Content $startupReport }
+        throw "Real Windows startup check failed: $($startup.ExitCode)"
+    }
+    $startupResult = Get-Content $startupReport -Raw | ConvertFrom-Json
+    if ($startupResult.status -ne 'passed') { throw 'Original media or Qt Quick presentation failed.' }
+    $platformEvent = @($startupResult.events | Where-Object phase -eq 'application_created')[0]
+    if ($platformEvent.platform -ne 'windows') { throw 'Startup was not tested with the real Windows platform.' }
+    Get-Content $startupReport
+} finally {
+    $env:QT_QPA_PLATFORM = $previousPlatform
+}

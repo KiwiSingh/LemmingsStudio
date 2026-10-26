@@ -23,6 +23,16 @@ $process = Start-Process $app -ArgumentList @('--self-test-report',"`"$report`""
 if (!$process.WaitForExit(180000)) { $process.Kill(); throw 'Installed app test timed out.' }
 if ($process.ExitCode -ne 0) { throw 'Installed app failed its checks.' }
 if ((Get-Content $report -Raw | ConvertFrom-Json).status -ne 'passed') { throw 'Installed app did not report success.' }
+$startupReport = Join-Path $TestRoot 'installed-startup.json'
+$oldPlatform = $env:QT_QPA_PLATFORM
+try {
+    $env:QT_QPA_PLATFORM = 'windows'
+    $env:LEMMINGS_DIAGNOSTICS_DIR = Join-Path $TestRoot 'launch-diagnostics'
+    $process = Start-Process $app -ArgumentList @('--software-rendering','--startup-check-report',"`"$startupReport`"") -PassThru
+    if (!$process.WaitForExit(120000)) { $process.Kill(); throw 'Installed startup timed out.' }
+    if ($process.ExitCode -ne 0) { throw 'Installed original startup failed.' }
+    if ((Get-Content $startupReport -Raw | ConvertFrom-Json).status -ne 'passed') { throw 'Installed startup did not report success.' }
+} finally { $env:QT_QPA_PLATFORM = $oldPlatform }
 $userFile = Join-Path $destination 'User project - preserve.lemmingspy'
 Set-Content $userFile 'User-owned sentinel; setup must not remove this file.' -Encoding utf8
 $hash = (Get-FileHash $userFile).Hash

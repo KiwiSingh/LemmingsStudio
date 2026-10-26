@@ -1,2 +1,2 @@
-from lemmings_studio.ui import main
+from lemmings_studio.bootstrap import main
 raise SystemExit(main())

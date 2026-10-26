@@ -649,28 +649,6 @@ class MainWindow(QMainWindow):
 
 
 def main():
-    import argparse
-    import json
-    import os
-    parser = argparse.ArgumentParser(description="LemmingsStudio Windows Python rewrite")
-    parser.add_argument("--self-test-report", type=Path, help="Run isolated bundle checks and write a JSON report")
-    args = parser.parse_args()
-    if args.self_test_report:
-        os.environ["QT_QPA_PLATFORM"] = "offscreen"
-    app = QApplication([sys.argv[0]])
-    app.setApplicationName("LemmingsStudio Windows Python Rewrite")
-    if args.self_test_report:
-        try:
-            from .validation import validate_bundle
-            result = validate_bundle(app)
-            code = 0
-        except Exception as error:
-            import traceback
-            result = {"status": "failed", "error": str(error), "traceback": traceback.format_exc()}
-            code = 1
-        args.self_test_report.parent.mkdir(parents=True, exist_ok=True)
-        args.self_test_report.write_text(json.dumps(result, indent=2), encoding="utf-8")
-        return code
-    window = MainWindow()
-    window.show()
-    return app.exec()
+    # Compatibility entry for older editable installs; the packaged entry is light.
+    from .bootstrap import main as launch
+    return launch()

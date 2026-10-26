@@ -125,3 +125,20 @@ Build `PythonStudio/native` with CMake into an external directory. Set
 Run `QT_QPA_PLATFORM=offscreen python -m pytest PythonStudio/tests -q`.
 The `Mac and Windows parity contracts` workflow repeats the real Swift reference
 and Windows native comparisons. Headless tests do not certify desktop launch.
+
+## Startup phase implementation
+
+The original eleven branding assets are staged by checksum from the Mac reference.
+A lightweight entry records launch events before importing Qt or audio. Qt Quick
+renders the original video/artwork and text; media initialization and audio-library
+preloading follow the first frame. The original WAV plays in normal launches.
+Software rendering is explicit and receives one retry on a reported scene-graph
+failure. Decode failures advance to the splash/workspace and leave diagnostics.
+
+The Windows bundle and installed application both have a real `windows` platform
+check: original video frames and WAV samples decode, the splash sequence finishes,
+and the existing workspace becomes visible. Audio output is suppressed in checks.
+Phase timings, screenshots and log paths are retained. This verifies startup,
+not all-workspace appearance, native hardware sound, cold-launch performance or
+full Windows parity. Exact platform blur/shadow/typography comparison remains part
+of visual acceptance; the original artwork is unchanged.

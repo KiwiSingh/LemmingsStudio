@@ -102,3 +102,32 @@ artifacts live under `/Volumes/Zweidrive/LemmingsStudio`. Source
 The environment directory is linked to the existing virtual environment on the
 same drive. This is a Windows product; running source checks on macOS does not
 replace or rebuild the Swift application.
+
+## Original startup and launch diagnostics
+
+The Windows development build now presents the original MagmaVance video, then
+LemmingsStudio artwork and the 1.55-second splash, with the original opening WAV.
+It uses custom Qt Quick presentation and CPU video frames so software rendering
+can work in a VM. Audio-library imports are deferred until after the first startup
+frame; model loading, plugin scanning and network jobs are not part of this path.
+The workspace remains the earlier development UI; this is not full visual parity.
+
+The build stages eleven byte-identical Mac media assets from their pinned source
+checksums. It bundles Qt Multimedia and tests an actual Windows desktop launch,
+video decoding, opening-WAV decoding and workspace handover. The check does not
+play sound or certify hardware audio latency. Its captures and phase timings are
+included in the validation artifact.
+
+Use `--software-rendering` if the graphics driver cannot initialize Qt Quick.
+A reported scene-graph initialization failure retries once with software rendering.
+`--startup-check-report <file.json>` exercises the startup and workspace without
+playing the opening sound. `--self-test-report` remains the separate editing/audio
+smoke check. The installer also verifies the installed startup presentation.
+
+Logs begin before Qt/audio imports. Windows stores them in
+`%LOCALAPPDATA%\LemmingsStudio\Diagnostics`; development uses the external checkout
+or `LEMMINGS_DIAGNOSTICS_DIR`. QML caches follow that explicit external location.
+Failed startup reports a log path, and the monitored initialization phase has a
+30-second timeout. A native crash can leave a fault log; a graphics driver that
+aborts the process before Qt reports an error may still require the explicit
+software-rendering option. Native-hardware cold/warm launch targets remain unverified.

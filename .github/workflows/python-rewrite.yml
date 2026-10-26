@@ -2,9 +2,9 @@ name: Windows Python rewrite
 on:
   push:
     branches: ['rewrite/python-windows']
-    paths: ['PythonStudio/**', 'Docs/PythonRewrite/**', '.github/workflows/python-rewrite.yml']
+    paths: ['PythonStudio/**', 'Docs/PythonRewrite/**', 'Docs/Parity/**', 'Sources/LemmingsStudio/Resources/**', 'tools/stage_startup_resources.py', '.github/workflows/python-rewrite.yml']
   pull_request:
-    paths: ['PythonStudio/**', 'Docs/PythonRewrite/**', '.github/workflows/python-rewrite.yml']
+    paths: ['PythonStudio/**', 'Docs/PythonRewrite/**', 'Docs/Parity/**', 'Sources/LemmingsStudio/Resources/**', 'tools/stage_startup_resources.py', '.github/workflows/python-rewrite.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -36,9 +36,10 @@ jobs:
         shell: pwsh
         run: |
           $output = "$env:RUNNER_TEMP/python-preview/application"
-          git archive --format=zip "--output=$output/Matching-Source.zip" HEAD PythonStudio Docs/PythonRewrite .github/workflows/python-rewrite.yml LICENSE THIRD_PARTY_NOTICES.md
+          git archive --format=zip "--output=$output/Matching-Source.zip" HEAD PythonStudio Docs/PythonRewrite Docs/Parity Sources/LemmingsStudio/Resources tools/stage_startup_resources.py .github/workflows/python-rewrite.yml LICENSE THIRD_PARTY_NOTICES.md
           if ($LASTEXITCODE -ne 0) { throw 'Source archive failed.' }
           Copy-Item "$env:RUNNER_TEMP/python-preview/bundle-smoke.json" $output
+          Copy-Item "$env:RUNNER_TEMP/python-preview/startup-check.json" $output
           Copy-Item Docs/PythonRewrite/dependencies.json "$output/dependency-license-metadata.json"
           $sha = git rev-parse HEAD
           @{ commit=$sha; target='Windows x64'; macOSProduct='unchanged Swift application'; releaseStatus='experimental; full parity and distribution audit pending' } | ConvertTo-Json | Set-Content "$output/build-manifest.json"
@@ -77,6 +78,12 @@ jobs:
           path: |
             python-test-results.xml
             ${{ runner.temp }}/python-preview/bundle-smoke.json
+            ${{ runner.temp }}/python-preview/startup-check.json
+            ${{ runner.temp }}/python-preview/launch-diagnostics/launch-*.log
+            ${{ runner.temp }}/python-preview/launch-diagnostics/*-video.png
+            ${{ runner.temp }}/python-preview/launch-diagnostics/*-splash.png
             ${{ runner.temp }}/python-preview/lifecycle/*.json
+            ${{ runner.temp }}/python-preview/lifecycle/launch-diagnostics/*.png
+            ${{ runner.temp }}/python-preview/lifecycle/launch-diagnostics/*.log
             ${{ runner.temp }}/python-preview/lifecycle/*.log
           if-no-files-found: ignore
