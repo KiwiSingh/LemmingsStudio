@@ -1,0 +1,28 @@
+LemmingsStudio Windows Developer Preview
+
+This is an early native audio-engine test harness for Windows 11 x64 development.
+It does not include a usable arrangement editor, piano roll or complete DAW interface.
+
+The setup wizard installs the application for the current Windows user. It does
+not require an administrator password, models, or a separate Visual C++ runtime.
+Start menu shortcuts and an uninstaller are included; a desktop shortcut is optional.
+
+The optional Devices folder contains the amp and sample-instrument prototypes,
+including VST3 bundles and standalone applications. External DAWs may need their
+plugin search paths configured manually. Setup does not change any DAW settings.
+No guitar samples, drum kits, neural models, or VoxGarden binaries are bundled.
+
+This preview is not a complete DAW replacement. Arrangement editing, full routing,
+automation, plugin isolation and several planned instruments are still in development.
+Use copies of existing projects for testing. Export currently excludes preview effects.
+
+Uninstall removes installed program files and shortcuts. Setup does not delete your
+projects, recordings, presets or downloaded content. Avoid saving projects inside
+the application directory.
+
+Open-source license notices, exact build information, corresponding native source
+and the pinned JUCE source archive are installed with the application. Rebuild
+instructions are in Source/README.txt. No additional EULA is imposed by this wizard.
+
+This internal preview installer is not code-signed. Public release signing and
+real-device audio validation remain release gates.

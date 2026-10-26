@@ -1,0 +1,71 @@
+name: Windows preview setup wizard
+on:
+  push:
+    paths: ['NativeStudio/windows/**', '.github/workflows/windows-installer.yml']
+  workflow_dispatch:
+    inputs:
+      source_run:
+        description: 'Actions run ID containing a successful native (windows-2022) job'
+        required: true
+        default: '40242042735'
+permissions:
+  contents: read
+  actions: read
+jobs:
+  installer:
+    runs-on: windows-2022
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCE_RUN: ${{ inputs.source_run || '40242042735' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: packaging
+      - name: Validate the source build and select its exact revision
+        id: source
+        shell: pwsh
+        run: |
+          if ($env:SOURCE_RUN -notmatch '^\d+$') { throw 'Invalid source run ID.' }
+          $run = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:SOURCE_RUN" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Could not read source run.' }
+          if ($run.head_repository.full_name -ne $env:GITHUB_REPOSITORY) { throw 'Source must belong to this repository.' }
+          $jobs = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:SOURCE_RUN/jobs?per_page=100" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Could not read source jobs.' }
+          if (!($jobs.jobs | Where-Object { $_.name -eq 'native (windows-2022)' -and $_.conclusion -eq 'success' })) { throw 'The Windows source job must have passed its checks.' }
+          "sha=$($run.head_sha)" >> $env:GITHUB_OUTPUT
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.source.outputs.sha }}
+          path: source
+      - name: Download the tested Windows binaries
+        shell: pwsh
+        run: |
+          gh run download $env:SOURCE_RUN --repo $env:GITHUB_REPOSITORY --name native-preview-windows-2022 --dir "$env:RUNNER_TEMP/artifacts"
+          if ($LASTEXITCODE -ne 0) { throw 'Could not download Windows artifact.' }
+      - name: Install the pinned setup compiler
+        shell: pwsh
+        run: |
+          choco install innosetup --version=6.5.4 --allow-downgrade --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { throw 'Inno Setup installation failed.' }
+      - name: Build the setup wizard and corresponding-source package
+        shell: pwsh
+        run: |
+          ./packaging/NativeStudio/windows/build-installer.ps1 -BuildRoot "$env:RUNNER_TEMP/artifacts" -SourceRoot "$env:GITHUB_WORKSPACE/source" -StageRoot "$env:RUNNER_TEMP/setup-stage" -OutputRoot "$env:RUNNER_TEMP/setup-output" -SourceRun $env:SOURCE_RUN -BuildVersion "0.1.0.${{ github.run_number }}"
+      - name: Verify installation, application launch, upgrade and uninstall
+        shell: pwsh
+        run: |
+          $setup = @(Get-ChildItem "$env:RUNNER_TEMP/setup-output" -Filter '*.exe')
+          if ($setup.Count -ne 1) { throw 'Expected one installer.' }
+          ./packaging/NativeStudio/windows/test-installer.ps1 -Installer $setup[0].FullName -TestRoot "$env:RUNNER_TEMP/installer-smoke"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LemmingsStudio-Windows-x64-Setup
+          path: ${{ runner.temp }}/setup-output/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Windows-installer-validation-logs
+          path: ${{ runner.temp }}/installer-smoke/*.log
+          if-no-files-found: ignore
