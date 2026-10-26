@@ -28,14 +28,14 @@ class WorkspaceController(QObject):
     position=Signal(int,float)
     audioFinished=Signal(int,str)
 
-    def __init__(self,data=None):
+    def __init__(self,data=None,persist_preferences=True):
         super().__init__()
         self._state_cache=None
         self.changed.connect(self._invalidate_state)
         self.document=WorkspaceDocument(data)
         self.track_id=self.document.data['tracks'][0]['id'] if self.document.data['tracks'] else ''
         self.clip_id='';self.note_id='';self.selected_tracks=[self.track_id]
-        self.workspace='Arrangement';self.browser='Library';self.dock='AI';self.detail='Devices'
+        self.workspace='Session';self.persist_preferences=persist_preferences;self.browser='Library';self.dock='AI';self.detail='Devices'
         self.theme=REFERENCE['themes'][0]['name'];self.status='Ready';self.path=None;self.beat=0.;self.snap=.25
         self.search='';self.scenes=8;self.master_gain=1.;self.epoch=0;self.pending=0;self.cancel=Event();self.tap_times=[]
         self.jobs=ThreadPoolExecutor(max_workers=1,thread_name_prefix='LemmingsWorkspace')
@@ -47,7 +47,13 @@ class WorkspaceController(QObject):
         try:
             settings=json.loads(self.settings_path.read_text(encoding='utf-8'))
             if settings.get('theme') in [t['name'] for t in REFERENCE['themes']]: self.theme=settings['theme']
+            if settings.get('workspace') in WORKSPACES:self.workspace=settings['workspace']
         except (OSError,ValueError): pass
+
+    def save_preferences(self):
+        if self.persist_preferences:
+            self.settings_path.parent.mkdir(parents=True,exist_ok=True)
+            self.settings_path.write_text(json.dumps({'theme':self.theme,'workspace':self.workspace}),encoding='utf-8')
 
     def _invalidate_state(self):self._state_cache=None
 
@@ -144,15 +150,14 @@ class WorkspaceController(QObject):
 
     def _command(self,name,a):
         tid=a.get('track',self.track_id);cid=a.get('clip',self.clip_id)
-        if name=='workspace': self.workspace=a['value'] if a['value'] in WORKSPACES else self.workspace
+        if name=='workspace': self.workspace=a['value'] if a['value'] in WORKSPACES else self.workspace;self.save_preferences()
         elif name=='browser': self.browser=a['value'] if a['value'] in BROWSER else self.browser
         elif name=='dock': self.dock=a['value'] if a['value'] in DOCK else self.dock
         elif name=='detail': self.detail=a['value']
         elif name=='search': self.search=a['value']
         elif name=='theme':
             if a['value'] not in [t['name'] for t in REFERENCE['themes']]: raise ValueError('Unknown theme')
-            self.theme=a['value'];self.settings_path.parent.mkdir(parents=True,exist_ok=True)
-            self.settings_path.write_text(json.dumps({'theme':self.theme}),encoding='utf-8')
+            self.theme=a['value'];self.save_preferences()
         elif name=='selectTrack':
             self.track_id=tid;self.clip_id='';self.note_id=''
             if a.get('extend'): self.selected_tracks=list(dict.fromkeys([*self.selected_tracks,tid]))
@@ -337,7 +342,7 @@ class WorkspaceController(QObject):
                     clip['notes'].append({'id':identity(),'pitch':note,'start':i/p['stepsPerBeat'],'length':.92/p['stepsPerBeat'],'velocity':step['velocity']})
             target['clips'].append(clip);target['useStepSequencer']=False
             data['lengthBars']=max(data['lengthBars'],math.ceil((start+length)/data['beatsPerBar']))
-        self.document.edit('Print step pattern',op);self.clip_id=clip_id;self.workspace='Arrangement';self.detail='Clip'
+        self.document.edit('Print step pattern',op);self.clip_id=clip_id;self.workspace='Session';self.persist_preferences=persist_preferences;self.detail='Clip'
 
     def submit(self,label,job,done):
         self.pending+=1;self.cancel.clear();self.status=label;self.changed.emit()
@@ -435,9 +440,9 @@ class WorkspaceController(QObject):
 
 
 class WorkspaceWindow(QObject):
-    def __init__(self):
+    def __init__(self,check_mode=False):
         super().__init__()
-        self.controller=WorkspaceController()
+        self.controller=WorkspaceController(persist_preferences=not check_mode)
         self.qml=QQmlApplicationEngine()
         self.warnings=[]
         self.qml.warnings.connect(lambda errors:self.warnings.extend(e.toString() for e in errors))

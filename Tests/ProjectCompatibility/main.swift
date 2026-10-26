@@ -107,7 +107,7 @@ for rate in [44100.0, 48000.0, 96000.0] {
 print("PASS: Exported all ten actual Swift drum voices at three sample rates and two parameter profiles")
 
 // Export exact visual/parameter reference values for the Python presentation.
-var workspaceReference: [String: Any] = [:]
+var workspaceReference: [String: Any] = ["referenceSystemMajor":ProcessInfo.processInfo.operatingSystemVersion.majorVersion]
 var themeRows: [[String: Any]] = []
 for theme in LemmingsVisualTheme.allCases {
     let p = LSTheme.palette(for: theme)

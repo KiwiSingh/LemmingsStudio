@@ -103,7 +103,7 @@ def main():
                     return
                 try:
                     from .workspace import WorkspaceWindow
-                    self.window = WorkspaceWindow()
+                    self.window = WorkspaceWindow(check_mode=bool(args.startup_check_report))
                     log.mark('workspace_constructed')
                     self.handover()
                 except Exception as error:
