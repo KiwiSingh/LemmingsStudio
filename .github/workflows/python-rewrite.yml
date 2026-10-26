@@ -14,10 +14,13 @@ jobs:
     timeout-minutes: 20
     env:
       QT_QPA_PLATFORM: offscreen
-      PIP_CACHE_DIR: ${{ runner.temp }}/pip-cache
-      PYINSTALLER_CONFIG_DIR: ${{ runner.temp }}/pyinstaller-cache
     steps:
       - uses: actions/checkout@v4
+      - name: Redirect build caches to the runner temporary directory
+        shell: pwsh
+        run: |
+          "PIP_CACHE_DIR=$env:RUNNER_TEMP/pip-cache" >> $env:GITHUB_ENV
+          "PYINSTALLER_CONFIG_DIR=$env:RUNNER_TEMP/pyinstaller-cache" >> $env:GITHUB_ENV
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
