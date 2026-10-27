@@ -148,6 +148,7 @@ def test_split_duplicate_and_automation_survive_shared_save(quick,tmp_path):
 def test_no_silent_render_substitution(monkeypatch):
     from lemmings_studio.workspace_audio import WorkspaceRenderer,Snapshot
     doc=WorkspaceDocument();tid=doc.data['tracks'][0]['id'];cid=doc.create_clip(tid);doc.add_note(tid,cid,0,60)
+    doc.track(doc.data,tid)['kind']='Oscillatron'
     with pytest.raises(ValueError,match='not yet ported'):WorkspaceRenderer(Snapshot(doc.data))
     doc.track(doc.data,tid)['kind']='Drum Machine'
     doc.automation_point(tid,'instrument','master',0,.5)

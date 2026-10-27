@@ -180,3 +180,74 @@ for rate in [44100.0,48000.0,96000.0] {
     }
 }
 print("PASS: Exported original stereo master limiter at three rates/two profiles")
+
+// Original melodic instruments, including the actual random guitar excitations.
+// Reflection is confined to this test harness; production Swift source is unchanged.
+let melodicDirectory=output.deletingLastPathComponent().appendingPathComponent("instrument-reference")
+try FileManager.default.createDirectory(at:melodicDirectory,withIntermediateDirectories:true)
+var melodicManifest: [[String:Any]]=[]
+for rate in [44100.0,48000.0,96000.0] {
+    var events: [(Int,Int,Int,Float)] = [
+        (0,1,48,0.8),(0,1,55,0.6),(0,1,60,0.9),
+        (Int(rate*0.025),0,55,0),(Int(rate*0.05),1,60,0.3),
+        (Int(rate*0.10),2,12,0.35)
+    ]
+    for note in 40..<60 { events.append((Int(rate*0.125),1,note,Float(0.5+Double(note%5)*0.1))) }
+    for note in 40...72 { events.append((Int(rate*0.20),0,note,0)) }
+    events += [(Int(rate*0.30),3,0,0),(Int(rate*0.45),1,72,0.8),(Int(rate*0.53),0,72,0)]
+    for profile in 0...4 {
+        let analog=AnalogSynth(sampleRate:rate)
+        if profile>0 {
+            analog.preset.osc1 = Waveform.allCases[(profile-1)%4]
+            analog.preset.osc2 = Waveform.allCases[profile%4]
+            analog.preset.cutoff=3400;analog.preset.resonance=0.88
+            analog.preset.attack=0.02;analog.preset.decay=0.09;analog.preset.sustain=0.4
+            analog.preset.release=0.07;analog.preset.detuneCents=23;analog.preset.osc2Mix=0.73;analog.preset.gain=0.42
+        }
+        let filename="analog-\(Int(rate))-\(profile)";var samples=[Float](repeating:0,count:Int(rate*1.5))
+        var frame=0;var index=0
+        while frame<samples.count {
+            while index<events.count && events[index].0==frame {
+                let e=events[index]
+                if e.1==1 {analog.noteOn(e.2,velocity:e.3)}
+                else if e.1==0 {analog.noteOff(e.2)}
+                else if e.1==2 {analog.pitchBend(e.3,channel:0,rangeSemitones:e.2)}
+                else {analog.allNotesOff()}
+                index+=1
+            }
+            let end=min(samples.count,frame+128,index<events.count ? events[index].0 : samples.count)
+            samples.withUnsafeMutableBufferPointer { analog.render(into:$0.baseAddress!.advanced(by:frame),frames:end-frame) };frame=end
+        }
+        try samples.withUnsafeBufferPointer { Data(buffer:$0) }.write(to:melodicDirectory.appendingPathComponent(filename+".f32"))
+        var parameters=Dictionary(uniqueKeysWithValues:analog.automatableParams.map { ($0.id,analog.getParam($0.id)) })
+        parameters["osc1"]=Double(Waveform.allCases.firstIndex(of:analog.preset.osc1)!)
+        parameters["osc2"]=Double(Waveform.allCases.firstIndex(of:analog.preset.osc2)!)
+        melodicManifest.append(["file":filename,"kind":"Analog Synth","rate":Int(rate),"frames":samples.count,"parameters":parameters,
+            "events":events.map { [$0.0,$0.1,$0.2,Double($0.3)] as [Any] }])
+    }
+    let guitar=GuitarInstrument(sampleRate:rate);let filename="guitar-\(Int(rate))"
+    var samples=[Float](repeating:0,count:Int(rate*1.5));var frame=0;var index=0;var excitationFiles: [String:String]=[:]
+    while frame<samples.count {
+        while index<events.count && events[index].0==frame {
+            let e=events[index]
+            if e.1==1 {
+                guitar.noteOn(e.2,velocity:e.3)
+                let strings=Mirror(reflecting:guitar).children.first { $0.label=="strings" }!.value as! [Int:KarplusStrong]
+                let excitation=Mirror(reflecting:strings[e.2]!).children.first { $0.label=="buffer" }!.value as! [Float]
+                let name="\(filename)-excitation-\(index).f32"
+                try excitation.withUnsafeBufferPointer { Data(buffer:$0) }.write(to:melodicDirectory.appendingPathComponent(name))
+                excitationFiles[String(index)]=name
+            }else if e.1==0 {guitar.noteOff(e.2)}
+            else if e.1==2 {guitar.pitchBend(e.3,channel:0,rangeSemitones:e.2)}
+            else {guitar.allNotesOff()}
+            index+=1
+        }
+        let end=min(samples.count,frame+128,index<events.count ? events[index].0 : samples.count)
+        samples.withUnsafeMutableBufferPointer { guitar.render(into:$0.baseAddress!.advanced(by:frame),frames:end-frame) };frame=end
+    }
+    try samples.withUnsafeBufferPointer { Data(buffer:$0) }.write(to:melodicDirectory.appendingPathComponent(filename+".f32"))
+    melodicManifest.append(["file":filename,"kind":"Guitar","rate":Int(rate),"frames":samples.count,"parameters":[:],"excitations":excitationFiles,
+        "events":events.map { [$0.0,$0.1,$0.2,Double($0.3)] as [Any] }])
+}
+try JSONSerialization.data(withJSONObject:melodicManifest,options:[.prettyPrinted,.sortedKeys]).write(to:melodicDirectory.appendingPathComponent("manifest.json"))
+print("PASS: Actual AnalogSynth/Guitar references: polyphony, retrigger, release, bend and panic")

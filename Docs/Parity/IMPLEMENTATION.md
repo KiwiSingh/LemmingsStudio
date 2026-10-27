@@ -150,3 +150,10 @@ directly. All seven pages, original themes, drum kit and master limiter are
 implemented/tested to the extent recorded in [WORKSPACE_UI.md](WORKSPACE_UI.md).
 That ledger supersedes the earlier UI-pending statements above. Full workspace
 and backend acceptance remains open; it lists the outstanding interactions.
+
+## Sound phase — original melodic instruments
+
+The first native melodic slice adds original AnalogSynth and GuitarInstrument,
+shared MIDI note scheduling, rack parameters and actual Swift audio comparisons.
+See [MELODIC_INSTRUMENTS.md](MELODIC_INSTRUMENTS.md) for evidence, tolerances,
+random-excitation handling and the remaining sound/native-graph gates.

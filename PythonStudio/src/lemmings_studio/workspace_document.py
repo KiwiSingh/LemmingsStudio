@@ -9,6 +9,7 @@ def make_device(kind):
     return {'id':identity(),'kind':kind,'bypassed':False,'mono':False,'sidechainEnabled':False,'params':deepcopy(next(d['defaults'] for d in REFERENCE['devices'] if d['kind']==kind))}
 
 from .project_contract import ProjectFile, _entities
+from .stock_contract import ANALOG_DEVICES,MAPPED_INSTRUMENT_DEVICES
 
 
 def identity():
@@ -247,7 +248,14 @@ class WorkspaceDocument:
     def add_device(self,track_id,definition):
         device={'id':identity(),'kind':definition['kind'],'bypassed':False,'mono':False,
                 'params':deepcopy(definition['defaults'])}
-        self.edit('Add '+device['kind'],lambda d:self.track(d,track_id)['devices'].append(device))
+        def add(data):
+            track=self.track(data,track_id)
+            if device['kind'] in ANALOG_DEVICES:
+                track['kind']='Analog Synth';track['useStepSequencer']=False
+                track['devices']=[d for d in track['devices'] if d['kind'] not in MAPPED_INSTRUMENT_DEVICES]
+                track['devices'].insert(0,device)
+            else:track['devices'].append(device)
+        self.edit('Add '+device['kind'],add)
         return device['id']
 
     def device_param(self,track_id,device_id,param,value,definition):

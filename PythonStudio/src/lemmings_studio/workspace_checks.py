@@ -4,6 +4,7 @@ from PySide6.QtCore import QEventLoop,QTimer
 from PySide6.QtQuick import QQuickItem
 from .workspace import WORKSPACES,REFERENCE
 from .project_contract import ProjectFile
+from .workspace_document import identity
 from .workspace_audio import WorkspaceRenderer,Snapshot
 
 
@@ -50,6 +51,16 @@ def verify(window,output):
     import numpy as np
     assert np.max(np.abs(renderer.block(0,min(renderer.rate,renderer.length))))>.01
     renderer.export(output/'original-drum-workspace.wav')
+    for kind in ('Analog Synth','Guitar'):
+        musical=deepcopy(original);musical['lengthBars']=1
+        track=musical['tracks'][0];track['kind']=kind
+        track['clips']=[{'id':identity(),'startBeat':0,'lengthBeats':4,'isActive':True,'notes':[{'id':identity(),'start':.25,'length':.5,'pitch':60,'velocity':.8}]}]
+        saved=output/(kind.replace(' ','-')+'-check.lemmingsproject');ProjectFile(musical).save(saved)
+        native=WorkspaceRenderer(Snapshot(ProjectFile.load(saved).data))
+        assert np.max(np.abs(native.output))>.01
+        assert not native.output[:1000].any()
+        native.export(output/(kind.replace(' ','-')+'-workspace.wav'))
+        checks[kind.replace(' ','_').lower()+'_render_reopen']=True
     checks.update(seven_workspaces_two_sizes=True,eleven_original_palettes=True,native_drum_render=True,
                   qml_errors_absent=not window.warnings)
     if window.warnings:raise RuntimeError('\n'.join(window.warnings))

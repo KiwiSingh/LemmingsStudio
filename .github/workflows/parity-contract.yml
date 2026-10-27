@@ -17,7 +17,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
-      - name: Compile actual Swift models and render original drum references
+      - name: Compile actual Swift models and render original instrument references
         env:
           LEMMINGS_TEST_OUTPUT: ${{ runner.temp }}/parity-reference
         run: sh Tests/ProjectCompatibility/run.sh
@@ -33,6 +33,7 @@ jobs:
             ${{ runner.temp }}/parity-reference/*.lemmingsproject
             ${{ runner.temp }}/parity-reference/workspace-reference.json
             ${{ runner.temp }}/parity-reference/drum-reference/
+            ${{ runner.temp }}/parity-reference/instrument-reference/
           if-no-files-found: error
   windows-native:
     needs: mac-reference
@@ -64,6 +65,7 @@ jobs:
           $env:LEMMINGS_NATIVE_LIBRARY="$env:RUNNER_TEMP/native-audio/Release/lemmings_audio.dll"
           $env:LEMMINGS_SWIFT_FIXTURE="$env:RUNNER_TEMP/parity-reference/swift.lemmingsproject"
           $env:LEMMINGS_SWIFT_DRUM_REFERENCE="$env:RUNNER_TEMP/parity-reference/drum-reference"
+          $env:LEMMINGS_SWIFT_INSTRUMENT_REFERENCE="$env:RUNNER_TEMP/parity-reference/instrument-reference"
           python -m pytest PythonStudio/tests -q --junitxml=parity-results.xml
           if ($LASTEXITCODE -ne 0) { throw 'Parity comparison failed' }
       - uses: actions/upload-artifact@v4

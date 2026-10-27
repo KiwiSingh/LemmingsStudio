@@ -12,6 +12,7 @@ from .workspace_document import WorkspaceDocument,identity,numeric
 from .project_contract import ProjectFile
 from .workspace_audio import REFERENCE,Snapshot,WorkspaceRenderer
 from .audio import AudioEngine
+from .stock_contract import ANALOG_DEVICES
 
 WORKSPACES=['Session','Arrangement','Piano Roll','Step Sequencer','Devices','Automation','Mixer']
 BROWSER=['Library','Tracks','Splice','Samples','Sounds','Pads','FX/Plugins']
@@ -112,6 +113,7 @@ class WorkspaceController(QObject):
         devices=deepcopy(selected.get('devices',[]))
         for device in devices:
             definition=next((x for x in REFERENCE['devices'] if x['kind']==device['kind']),None)
+            device['nativeInstrument']=selected.get('kind')=='Analog Synth' and device['kind'] in ANALOG_DEVICES
             device['controls']=deepcopy(definition['params']) if definition else []
             for p in device['controls']: p['value']=device.get('params',{}).get(p['id'],definition['defaults'].get(p['id'],p['min']))
         instrument=next((d for d in REFERENCE['devices'] if d['kind']=={'Analog Synth':'Subtractive Synth','Drum Machine':'Drum Matrix','Sequencer':'Drum Matrix'}.get(selected.get('kind'),selected.get('kind'))),None)

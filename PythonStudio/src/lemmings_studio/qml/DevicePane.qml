@@ -21,9 +21,9 @@ ColumnLayout {
                         id:content;anchors.fill:parent;anchors.margins:12;spacing:8
                         RowLayout {
                             Layout.fillWidth:true
-                            LSButton{text:card.modelData.bypassed ? "○" : "●";selected:!card.modelData.bypassed;onClicked:studio.command("bypassDevice",{device:card.modelData.id})}
+                            LSButton{visible:!card.modelData.nativeInstrument;text:card.modelData.bypassed ? "○" : "●";selected:!card.modelData.bypassed;onClicked:studio.command("bypassDevice",{device:card.modelData.id})}
                             Label{text:card.modelData.kind;font.bold:true;Layout.fillWidth:true}
-                            LSButton{text:"Mono";selected:!!card.modelData.mono;onClicked:studio.command("monoDevice",{device:card.modelData.id})}
+                            LSButton{visible:!card.modelData.nativeInstrument;text:"Mono";selected:!!card.modelData.mono;onClicked:studio.command("monoDevice",{device:card.modelData.id})}
                             LSButton{text:"↑";onClicked:studio.command("moveDevice",{device:card.modelData.id,offset:-1})}
                             LSButton{text:"↓";onClicked:studio.command("moveDevice",{device:card.modelData.id,offset:1})}
                             LSButton{text:"×";onClicked:studio.command("removeDevice",{device:card.modelData.id})}
@@ -43,7 +43,7 @@ ColumnLayout {
                                 }
                             }
                         }
-                        Label{Layout.fillWidth:true;wrapMode:Text.Wrap;text:"Playback for this device is not available in this Windows build yet. Its settings are saved with the project.";font.pixelSize:10;opacity:0.65}
+                        Label{Layout.fillWidth:true;wrapMode:Text.Wrap;text:card.modelData.nativeInstrument ? "Original native Analog Synth · parameters restored from the shared project. Automation awaits the native graph." : "Playback for this device is not available in this Windows build yet. Its settings are saved with the project.";font.pixelSize:10;opacity:0.65}
                     }
                 }
             }
