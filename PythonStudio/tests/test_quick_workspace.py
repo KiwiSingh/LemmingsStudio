@@ -147,6 +147,8 @@ def test_split_duplicate_and_automation_survive_shared_save(quick,tmp_path):
 
 def test_no_silent_render_substitution(monkeypatch):
     from lemmings_studio.workspace_audio import WorkspaceRenderer,Snapshot
+    def native_unavailable(_):raise AssertionError('Preflight must run before loading native audio')
+    monkeypatch.setattr('lemmings_studio.workspace_audio.NativeAudio',native_unavailable)
     doc=WorkspaceDocument();tid=doc.data['tracks'][0]['id'];cid=doc.create_clip(tid);doc.add_note(tid,cid,0,60)
     doc.track(doc.data,tid)['kind']='Unknown Instrument'
     with pytest.raises(ValueError,match='not ported'):WorkspaceRenderer(Snapshot(doc.data))

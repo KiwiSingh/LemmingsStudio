@@ -82,6 +82,11 @@ class WorkspaceRenderer(Renderer):
         data=deepcopy(snapshot.data);self.rate=int(data.get('sampleRate',48000));base=Path(base or Path.cwd())
         if not 8000<=self.rate<=192000:raise ValueError('Unsupported sample rate')
         if data.get('channelFormat','Stereo')!='Stereo':raise ValueError('Multichannel export awaits endpoint integration')
+        # Document errors must remain readable even before a native library is
+        # installed (source checks and recoverable unsupported projects).
+        for track in data.get('tracks',[]):
+            if track['kind'] not in NATIVE_KINDS and not (track.get('frozen') and track.get('bounced')):
+                raise ValueError(f"{track['kind']} DSP is not ported; the saved instrument was not replaced")
         timeline=self.timeline=Timeline(data,self.rate);self.length=timeline.frame(timeline.length)+rounded(self.rate*snapshot.tail_seconds)
         if self.length>self.rate*600:raise ValueError('Render at most ten minutes at a time')
         self.output=np.zeros((self.length,2),dtype=np.float32);self.sources=[]
