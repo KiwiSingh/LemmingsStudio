@@ -32,6 +32,7 @@ ColumnLayout {
                         model:pattern.stepCount
                         LSButton {
                             required property int index
+                            objectName:"step-cell-"+lane.modelData.note+"-"+index
                             width:28;height:32
                             enabled:!!stateData.stepEditable
                             text:(index+1).toString()

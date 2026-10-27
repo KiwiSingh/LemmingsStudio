@@ -245,3 +245,20 @@ def test_original_bhangra_lanes_and_groove_are_editable(quick):
     assert c.document.data['bpm']==tempo and c.track()['stepPattern']['steps'][3]['hits']
     assert len(c.track()['sequencerLayers'])==14 and c.track()['sequencerLayers'][12]['note']==84
     assert c.track_id==tid and not window.warnings
+
+
+def test_visible_step_cells_update_on_the_same_edit(quick):
+    _,window,c=quick
+    c.command('addTrack',{'kind':'Bhangra Architect'});c.command('workspace',{'value':'Step Sequencer'})
+    c.command('percussionGroove',{'name':c.state['percussionGrooves'][0]['name']});QTest.qWait(40)
+    def items(item):
+        yield item
+        for child in item.childItems():yield from items(child)
+    cell=next(i for i in items(window.window.contentItem()) if i.objectName()=='step-cell-69-0')
+    assert cell.property('selected') is True
+    c.command('step',{'pitch':69,'step':0});QTest.qWait(40)
+    cell=next(i for i in items(window.window.contentItem()) if i.objectName()=='step-cell-69-0')
+    assert cell.property('selected') is False
+    c.command('step',{'pitch':69,'step':0});QTest.qWait(40)
+    cell=next(i for i in items(window.window.contentItem()) if i.objectName()=='step-cell-69-0')
+    assert cell.property('selected') is True

@@ -32,7 +32,6 @@ class WorkspaceController(QObject):
     def __init__(self,data=None,persist_preferences=True):
         super().__init__()
         self._state_cache=None
-        self.changed.connect(self._invalidate_state)
         self.document=WorkspaceDocument(data)
         self.track_id=self.document.data['tracks'][0]['id'] if self.document.data['tracks'] else ''
         self.clip_id='';self.note_id='';self.selected_tracks=[self.track_id]
@@ -57,7 +56,11 @@ class WorkspaceController(QObject):
             self.settings_path.parent.mkdir(parents=True,exist_ok=True)
             self.settings_path.write_text(json.dumps({'theme':self.theme,'workspace':self.workspace}),encoding='utf-8')
 
-    def _invalidate_state(self):self._state_cache=None
+    def _emit_changed(self):
+        # QML notify consumers can run before ordinary signal-connected Python
+        # slots. Invalidate before emission so every consumer reads this edit.
+        self._state_cache=None
+        self.changed.emit()
 
     def track(self,data=None):
         try:return WorkspaceDocument.track(data or self.document.data,self.track_id)
@@ -68,7 +71,7 @@ class WorkspaceController(QObject):
         except (StopIteration,KeyError,ValueError): return None
 
     def message(self,value):
-        self.status=str(value);self.changed.emit()
+        self.status=str(value);self._emit_changed()
 
     def notify(self):
         if self.track_id not in [t['id'] for t in self.document.data['tracks']]:
@@ -78,7 +81,7 @@ class WorkspaceController(QObject):
         clip=self.clip()
         if clip is None:self.clip_id='';self.note_id=''
         elif self.note_id not in {n['id'] for n in clip.get('notes',[])}:self.note_id=''
-        self.changed.emit()
+        self._emit_changed()
 
     @Property('QVariantMap',notify=changed)
     def palette(self):
@@ -371,7 +374,7 @@ class WorkspaceController(QObject):
         self.document.edit('Print step pattern',op);self.clip_id=clip_id;self.workspace='Session';self.persist_preferences=persist_preferences;self.detail='Clip'
 
     def submit(self,label,job,done):
-        self.pending+=1;self.cancel.clear();self.status=label;self.changed.emit()
+        self.pending+=1;self.cancel.clear();self.status=label;self._emit_changed()
         def work():
             try: result=(done,job(),None)
             except Exception as error: result=(done,None,error)
