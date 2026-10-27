@@ -21,15 +21,23 @@ def verify(window,output):
     c.command('redo',{});assert c.document.data==edited
     path=output/'workspace-check.lemmingsproject';ProjectFile(edited).save(path)
     assert ProjectFile.load(path).data==edited
-    checks={'shared_project_edit_undo_reopen':True};captures=[]
+    checks={'shared_project_edit_undo_reopen':True};captures=[];viewports=[]
+    # Explicit finite maximum overrides Windows' default monitor-sized tracking
+    # limit on the small Hyper-V CI display. The actual client size is asserted.
+    window.window.setMaximumWidth(4096);window.window.setMaximumHeight(4096)
     for size in [(1600,900),(1024,768)]:
         window.window.resize(*size);settle()
+        assert (window.window.width(),window.window.height())==size,f'Requested {size}, actual {(window.window.width(),window.window.height())}'
+        viewports.append({'logical_width':window.window.width(),'logical_height':window.window.height()})
         for page in WORKSPACES:
             c.command('workspace',{'value':page});settle()
             loader=window.window.findChild(QQuickItem,'workspacePage')
             assert loader.property('ready') and loader.width()>300 and loader.height()>100,page
             filename=f'{size[0]}x{size[1]}-{page.replace(" ","-")}.png'
-            assert window.window.grabWindow().save(str(output/filename)),filename
+            capture=window.window.grabWindow()
+            ratio=capture.devicePixelRatio()
+            assert (capture.width(),capture.height())==(round(size[0]*ratio),round(size[1]*ratio)),filename
+            assert capture.save(str(output/filename)),filename
             captures.append(filename)
     window.window.resize(1600,900);c.workspace='Arrangement'
     for theme in REFERENCE['themes']:
@@ -46,4 +54,4 @@ def verify(window,output):
                   qml_errors_absent=not window.warnings)
     if window.warnings:raise RuntimeError('\n'.join(window.warnings))
     c.document.data=original;c.document.saved=deepcopy(original);c.theme=original_theme;c.notify()
-    return {'checks':checks,'captures':captures,'directory':str(output)}
+    return {'checks':checks,'captures':captures,'viewports':viewports,'directory':str(output)}
