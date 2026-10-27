@@ -34,6 +34,9 @@ jobs:
             ${{ runner.temp }}/parity-reference/workspace-reference.json
             ${{ runner.temp }}/parity-reference/drum-reference/
             ${{ runner.temp }}/parity-reference/instrument-reference/
+            ${{ runner.temp }}/parity-reference/effect-reference/
+            ${{ runner.temp }}/parity-reference/warp-reference/
+            ${{ runner.temp }}/parity-reference/noise-oracle.json
           if-no-files-found: error
   windows-native:
     needs: mac-reference
@@ -66,6 +69,8 @@ jobs:
           $env:LEMMINGS_SWIFT_FIXTURE="$env:RUNNER_TEMP/parity-reference/swift.lemmingsproject"
           $env:LEMMINGS_SWIFT_DRUM_REFERENCE="$env:RUNNER_TEMP/parity-reference/drum-reference"
           $env:LEMMINGS_SWIFT_INSTRUMENT_REFERENCE="$env:RUNNER_TEMP/parity-reference/instrument-reference"
+          $env:LEMMINGS_SWIFT_EFFECT_REFERENCE="$env:RUNNER_TEMP/parity-reference/effect-reference"
+          $env:LEMMINGS_SWIFT_WARP_REFERENCE="$env:RUNNER_TEMP/parity-reference/warp-reference"
           python -m pytest PythonStudio/tests -q --junitxml=parity-results.xml
           if ($LASTEXITCODE -ne 0) { throw 'Parity comparison failed' }
       - uses: actions/upload-artifact@v4

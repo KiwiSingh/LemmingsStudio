@@ -96,7 +96,7 @@ class AnalogParameters(C.Structure):
 class NativeInstrument:
     def __init__(self,library,kind,rate,parameters,seed):
         import math
-        if kind not in ('Analog Synth','Guitar'):raise ValueError('Unsupported native instrument')
+        if kind not in ('Analog Synth','Guitar','LemmingBass','Oscillatron','Indian Percussion','Bhangra Dhol','Bhangra Architect'):raise ValueError('Unsupported native instrument')
         if not math.isfinite(rate) or not 8000<=rate<=192000:raise ValueError('Unsupported sample rate')
         if type(seed) is not int or not 0<=seed<2**64:raise ValueError('Invalid excitation seed')
         p=dict(cutoff=1800.,resonance=.25,attack=.005,decay=.15,sustain=.7,release=.3,detuneCents=8.,osc2Mix=.5,gain=.5,osc1=2,osc2=2)
@@ -105,14 +105,27 @@ class NativeInstrument:
             if not isinstance(p[key],(int,float)) or not math.isfinite(p[key]) or p[key] not in range(4):raise ValueError('Invalid oscillator waveform')
             p[key]=int(p[key])
         params=AnalogParameters(*(p[k] for k in ('cutoff','resonance','attack','decay','sustain','release','detuneCents','osc2Mix','gain','osc1','osc2')))
-        self.library=library
+        self.library=library;self.kind=kind
         library.ls_instrument_create.argtypes=[C.c_uint32,C.c_double,C.POINTER(AnalogParameters),C.c_uint64]
         library.ls_instrument_create.restype=C.c_void_p
         library.ls_instrument_destroy.argtypes=[C.c_void_p];library.ls_instrument_destroy.restype=None
         library.ls_instrument_event.argtypes=[C.c_void_p,C.c_uint32,C.c_int,C.c_float];library.ls_instrument_event.restype=C.c_int
         library.ls_instrument_process.argtypes=[C.c_void_p,C.POINTER(C.c_float),C.c_uint32];library.ls_instrument_process.restype=C.c_int
         library.ls_guitar_excitation.argtypes=[C.c_void_p,C.c_int,C.POINTER(C.c_float),C.c_uint32];library.ls_guitar_excitation.restype=C.c_int
-        self.handle=library.ls_instrument_create(0 if kind=='Analog Synth' else 1,rate,C.byref(params),seed)
+        if kind in ('Analog Synth','Guitar'):
+            self.handle=library.ls_instrument_create(0 if kind=='Analog Synth' else 1,rate,C.byref(params),seed)
+        else:
+            from .native_effects import Parameter,DEFINITIONS
+            provided=dict(parameters or {})
+            definition=DEFINITIONS.get(kind)
+            for key,value in provided.items():
+                info=next((p for p in definition['params'] if p['id']==key),None) if definition else None
+                if key=='noiseEnabled' and kind in ('Indian Percussion','Bhangra Dhol','Bhangra Architect'):
+                    if value not in (0,1):raise ValueError('Invalid noise comparison mode')
+                elif info is None or not math.isfinite(value) or not info['min']<=value<=info['max']:raise ValueError('Invalid stock instrument parameter')
+            table=(Parameter*len(provided))(*(Parameter(k.encode(),v) for k,v in provided.items()))
+            library.ls_instrument_create_stock.argtypes=[C.c_char_p,C.c_double,C.POINTER(Parameter),C.c_uint32,C.c_uint64];library.ls_instrument_create_stock.restype=C.c_void_p
+            self.handle=library.ls_instrument_create_stock(kind.encode(),rate,table,len(table),seed)
         if not self.handle:raise ValueError('Invalid native instrument parameters or allocation failure')
 
     def __enter__(self):return self
@@ -129,6 +142,19 @@ class NativeInstrument:
     def event(self,event_type,note,value=0.):
         self.validate_event(event_type,note,value)
         if self.library.ls_instrument_event(self.handle,event_type,note,value):raise ValueError('Invalid instrument event')
+
+    def set(self,key,value):
+        import math
+        if not isinstance(key,str) or not math.isfinite(value):raise ValueError('Invalid instrument parameter')
+        from .native_effects import DEFINITIONS
+        if self.kind=='Oscillatron':key={'osc2Mix':'osc2Level','detuneCents':'osc2DetuneCents'}.get(key,key)
+        elif self.kind=='LemmingBass' and key=='osc2Mix':key='sub'
+        definition=DEFINITIONS.get('Subtractive Synth' if self.kind=='Analog Synth' else self.kind)
+        info=next((p for p in definition['params'] if p['id']==key),None) if definition else None
+        if info is None or not (-1200<=value<=1200 if self.kind=='Analog Synth' and key=='detuneCents' else info['min']<=value<=info['max']):raise ValueError('Invalid instrument parameter')
+        method=self.library.ls_instrument_set
+        method.argtypes=[C.c_void_p,C.c_char_p,C.c_double];method.restype=C.c_int
+        if method(self.handle,key.encode(),value):raise ValueError('Invalid instrument parameter or closed instance')
 
     def process_into(self,samples):
         if len(samples)>65536 or samples.dtype!=np.float32 or samples.ndim!=1 or not samples.flags.c_contiguous or not samples.flags.writeable:raise ValueError('Expected writable contiguous mono float32 buffer')

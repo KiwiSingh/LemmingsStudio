@@ -161,6 +161,16 @@ class ProjectFile:
     def load(cls, path: Path) -> 'ProjectFile':
         return cls.decode(path.read_bytes())
 
+    def portable(self, base: Path) -> 'ProjectFile':
+        """Embed one-shots without rewriting source paths or the original document."""
+        from .native_sources import load_layer
+        result=deepcopy(self.data)
+        for track in result.get('tracks',[]):
+            for layer in track.get('sequencerLayers',[]):
+                if layer.get('samplePath') and layer.get('embeddedSamples') is None:
+                    layer['embeddedSamples']=load_layer(layer,base).tolist()
+        return ProjectFile(result)
+
     def save(self, path: Path):
         if path.suffix.lower() != '.lemmingsproject':
             raise ProjectContractError('Use the shared .lemmingsproject extension')

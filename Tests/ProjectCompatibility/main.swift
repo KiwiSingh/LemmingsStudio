@@ -251,3 +251,131 @@ for rate in [44100.0,48000.0,96000.0] {
 }
 try JSONSerialization.data(withJSONObject:melodicManifest,options:[.prettyPrinted,.sortedKeys]).write(to:melodicDirectory.appendingPathComponent("manifest.json"))
 print("PASS: Actual AnalogSynth/Guitar references: polyphony, retrigger, release, bend and panic")
+
+// Every actual registered post-instrument processor, including aliases/no-ops.
+let effectsDirectory=output.deletingLastPathComponent().appendingPathComponent("effect-reference")
+try FileManager.default.createDirectory(at:effectsDirectory,withIntermediateDirectories:true)
+var effectsManifest:[[String:Any]]=[]
+for rate in [44100.0,48000.0,96000.0] {
+    let count=Int(rate*0.65)
+    var sourceL=[Float](repeating:0,count:count),sourceR=sourceL
+    for i in 0..<count {
+        let t=Double(i)/rate
+        sourceL[i]=Float(sin(2 * .pi * 110*t)*0.35 + sin(2 * .pi * 3117*t)*0.12)
+        sourceR[i]=Float(sin(2 * .pi * 173*t)*0.23 + cos(2 * .pi * 5271*t)*0.09)
+        if i%4096<4 { sourceL[i]+=0.7;sourceR[i]-=0.5 }
+        if i>count*3/4 {sourceL[i]=0;sourceR[i]=0}
+    }
+    var interleaved=[Float](repeating:0,count:count*2)
+    for i in 0..<count {interleaved[2*i]=sourceL[i];interleaved[2*i+1]=sourceR[i]}
+    try interleaved.withUnsafeBufferPointer {Data(buffer:$0)}.write(to:effectsDirectory.appendingPathComponent("input-\(Int(rate)).f32"))
+    for (deviceIndex,kind) in DeviceKind.allCases.enumerated() where !kind.isBuiltInTrackInstrument {
+        for profile in 0...2 {
+            let effect=DeviceFactory.make(kind)
+            if profile==2 && !(effect is SidechainAudioEffect) {continue}
+            (effect as? SampleRateAware)?.setSampleRate(rate)
+            (effect as? TempoAware)?.setTempo(137)
+            var parameters=DeviceFactory.defaults(for:kind)
+            if profile>0 { for info in effect.automatableParams { parameters[info.id]=info.min+(info.max-info.min)*0.37 } }
+            for (key,value) in parameters {effect.setParam(key,value)}
+            var left=sourceL,right=sourceR
+            for start in stride(from:0,to:count,by:128) {
+                left.withUnsafeMutableBufferPointer {l in right.withUnsafeMutableBufferPointer {r in
+                    if profile==2, let sc=effect as? SidechainAudioEffect {
+                        let detectorL=sourceL.map{$0*3},detectorR=sourceR.map{$0*3}
+                        detectorL.withUnsafeBufferPointer {dl in detectorR.withUnsafeBufferPointer {dr in
+                            sc.processSidechain(l.baseAddress!.advanced(by:start),r.baseAddress!.advanced(by:start),sidechainL:dl.baseAddress!.advanced(by:start),sidechainR:dr.baseAddress!.advanced(by:start),frames:min(128,count-start))
+                        }}
+                    }else {effect.process(l.baseAddress!.advanced(by:start),r.baseAddress!.advanced(by:start),frames:min(128,count-start))}
+                }}
+            }
+            for i in 0..<count {interleaved[2*i]=left[i];interleaved[2*i+1]=right[i]}
+            let file="\(Int(rate))-\(deviceIndex)-\(profile)"
+            try interleaved.withUnsafeBufferPointer {Data(buffer:$0)}.write(to:effectsDirectory.appendingPathComponent(file+".f32"))
+            effectsManifest.append(["file":file,"kind":kind.rawValue,"rate":Int(rate),"frames":count,"parameters":parameters,"tempo":137,"profile":profile,"sidechain":profile==2])
+        }
+    }
+}
+try JSONSerialization.data(withJSONObject:effectsManifest,options:[.sortedKeys]).write(to:effectsDirectory.appendingPathComponent("manifest.json"))
+print("PASS: Original effect registry audio references at three rates/two profiles")
+
+// Remaining original instruments; only unseeded percussion noise is instrumented
+// in the external test-source copy. See noise-oracle.json for source checksum.
+var stockManifest:[[String:Any]]=[]
+for rate in [44100.0,48000.0,96000.0] {
+    for kind in ["LemmingBass","Oscillatron","Indian Percussion","Bhangra Architect"] {
+        for profile in 0...1 {
+            let instrument:Instrument
+            switch kind {
+            case "LemmingBass":instrument=LemmingBassInstrument(sampleRate:rate)
+            case "Oscillatron":instrument=OscillatronInstrument(sampleRate:rate)
+            case "Bhangra Architect":instrument=BhangraArchitectInstrument(sampleRate:rate)
+            default:instrument=IndianPercussion(sampleRate:rate)
+            }
+            var parameters:[String:Double]=[:]
+            if let auto=instrument as? Automatable {
+                if profile==1 {for p in auto.automatableParams {auto.setParam(p.id,p.min+(p.max-p.min)*0.42)}}
+                for p in auto.automatableParams {parameters[p.id]=auto.getParam(p.id)}
+            }
+            parityNoiseSeed=0xC0FFEE
+            var events:[(Int,Int,Int,Float)]=[]
+            for j in 0..<40 {events.append((Int(Double(j)*rate*0.004),1,kind=="Bhangra Architect" ? [60,69,84,86,90][j%5] : (kind=="Indian Percussion" ? 60+j%12 : 36+j%35),Float(0.4+Double(j%5)*0.1)))}
+            events += [(Int(rate*0.18),2,12,0.3),(Int(rate*0.25),3,0,0),(Int(rate*0.35),1,60,0.7),(Int(rate*0.45),0,60,0)]
+            var samples=[Float](repeating:0,count:Int(rate*1.2)),frame=0,index=0
+            while frame<samples.count {
+                while index<events.count && events[index].0==frame {
+                    let e=events[index]
+                    if e.1==1 {
+                        instrument.noteOn(e.2,velocity:e.3)
+                    }else if e.1==0 {instrument.noteOff(e.2)}
+                    else if e.1==2 {instrument.pitchBend(e.3,channel:0,rangeSemitones:e.2)}
+                    else {instrument.allNotesOff()}
+                    index+=1
+                }
+                let end=min(samples.count,frame+128,index<events.count ? events[index].0 : samples.count)
+                samples.withUnsafeMutableBufferPointer {instrument.render(into:$0.baseAddress!.advanced(by:frame),frames:end-frame)};frame=end
+            }
+            let file="stock-\(kind.replacingOccurrences(of:" ",with:"-"))-\(Int(rate))-\(profile)"
+            try samples.withUnsafeBufferPointer {Data(buffer:$0)}.write(to:melodicDirectory.appendingPathComponent(file+".f32"))
+            stockManifest.append(["file":file,"kind":kind,"rate":Int(rate),"frames":samples.count,"parameters":parameters,"events":events.map{[$0.0,$0.1,$0.2,Double($0.3)] as [Any]}])
+        }
+    }
+}
+try JSONSerialization.data(withJSONObject:stockManifest,options:[.sortedKeys]).write(to:melodicDirectory.appendingPathComponent("stock-manifest.json"))
+
+let warpDirectory=output.deletingLastPathComponent().appendingPathComponent("warp-reference")
+try FileManager.default.createDirectory(at:warpDirectory,withIntermediateDirectories:true)
+let warpInput=(0..<16384).map { i -> Float in let t=Double(i)/48000;return Float(sin(2 * .pi * 220*t)*0.3+cos(2 * .pi * 715*t)*0.13) }
+try warpInput.withUnsafeBufferPointer{Data(buffer:$0)}.write(to:warpDirectory.appendingPathComponent("input.f32"))
+for ratio in [0.7,1.0,1.35] {for mode in WarpMode.allCases {
+    let result=WarpEngine.stretch(warpInput,ratio:ratio,mode:mode)
+    try result.withUnsafeBufferPointer{Data(buffer:$0)}.write(to:warpDirectory.appendingPathComponent("\(mode.rawValue)-\(ratio).f32"))
+}}
+print("PASS: All three original warp algorithms")
+
+// Real sample-layer processors, with portable payload rather than local paths.
+var sampleData=[Float]()
+for i in 0..<6000 {let t=Double(i);let tone=sin(t*0.061);let envelope=exp(-t/1800.0);sampleData.append(Float(tone*0.45*envelope))}
+var sampleLayer=SequencerLayer(name:"Portable one-shot",source:.splice,note:60,velocity:0.73)
+sampleLayer.embeddedSamples=sampleData
+var sampleManifest:[[String:Any]]=[]
+for rate in [44100.0,48000.0,96000.0] {for hybrid in [false,true] {
+    parityNoiseSeed=0xC0FFEE
+    let instrument:Instrument=hybrid ? SampleLayerHybridInstrument(name:"Test",base:BhangraArchitectInstrument(sampleRate:rate),layers:[sampleLayer],sampleRate:rate) : SampleLayerDrumKit(name:"Test",genre:.rock,layers:[sampleLayer],sampleRate:rate)
+    let events=(0..<54).map { j in (j*128,1,j%3==0 ? (hybrid ? 84 : 36):60,Float(0.6)) }
+    var samples=[Float](repeating:0,count:Int(rate*0.5));var frame=0,index=0
+    while frame<samples.count {
+        while index<events.count && events[index].0==frame {let e=events[index];instrument.noteOn(e.2,velocity:e.3);index+=1}
+        let end=min(samples.count,frame+128,index<events.count ? events[index].0 : samples.count)
+        samples.withUnsafeMutableBufferPointer {instrument.render(into:$0.baseAddress!.advanced(by:frame),frames:end-frame)};frame=end
+    }
+    let file="samples-\(Int(rate))-\(hybrid ? "hybrid":"drums")"
+    try samples.withUnsafeBufferPointer{Data(buffer:$0)}.write(to:melodicDirectory.appendingPathComponent(file+".f32"))
+    sampleManifest.append(["file":file,"rate":Int(rate),"hybrid":hybrid,"frames":samples.count,"events":events.map{[$0.0,$0.1,$0.2,Double($0.3)] as [Any]},"samples":sampleData,"level":Double(sampleLayer.velocity)])
+}}
+try JSONSerialization.data(withJSONObject:sampleManifest,options:[.sortedKeys]).write(to:melodicDirectory.appendingPathComponent("sample-manifest.json"))
+let sampleProject=Project();let sampleTrack=Track(name:"Portable",kind:.drums,color:.blue);sampleTrack.sequencerLayers=[sampleLayer];sampleProject.tracks=[sampleTrack]
+let sampleDocument=try ProjectDocument.decode(ProjectDocument(project:sampleProject).encoded()).makeProject()
+require(sampleDocument.tracks[0].sequencerLayers[0].embeddedSamples==sampleData,"Portable layer payload lost")
+try ProjectDocument(project:sampleProject).encoded().write(to:output.deletingLastPathComponent().appendingPathComponent("portable-sample.lemmingsproject"))
+print("PASS: Original drum/hybrid sample voices and portable layer document")

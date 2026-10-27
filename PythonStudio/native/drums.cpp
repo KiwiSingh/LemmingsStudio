@@ -155,3 +155,57 @@ int ls_apply_limiter(float* stereo, std::uint32_t frames, double rate, const dou
     }
     return 0;
 }
+
+#include <string_view>
+#include <vector>
+#include <memory>
+struct LSDrumKit {
+ double rate;std::array<DrumVoice,24> voices;std::array<LSDrumParams,10> params;float master=1;unsigned next=0;
+ LSDrumKit(double sr,const LSDrumParams* p):rate(sr){std::copy_n(p,10,params.begin());for(auto& v:voices)v.stop();}
+};
+LSDrumKit* ls_kit_create(double rate,const LSDrumParams* params) noexcept {
+ if(!params||!std::isfinite(rate)||rate<8000||rate>192000)return nullptr;float probe;
+ for(unsigned i=0;i<10;++i)if(ls_render_drum(i,rate,params+i,&probe,0))return nullptr;
+ try{return new LSDrumKit(rate,params);}catch(...){return nullptr;}
+}
+void ls_kit_destroy(LSDrumKit* kit) noexcept {delete kit;}
+int ls_kit_event(LSDrumKit* kit,std::uint32_t type,int note,float velocity) noexcept {
+ if(!kit||type>3||note<0||note>127||!std::isfinite(velocity)||velocity<0||velocity>1)return -1;
+ if(type==3){for(auto& v:kit->voices)v.stop();return 0;}
+ if(type!=1)return 0;constexpr int notes[]={36,35,38,39,37,42,46,45,51,49};
+ for(unsigned i=0;i<10;++i)if(note==notes[i]){auto p=kit->params[i];p.velocity=velocity;kit->voices[kit->next].trigger(i,kit->rate,p);kit->next=(kit->next+1)%24;break;}return 0;
+}
+int ls_kit_set(LSDrumKit* kit,const char* id,double value) noexcept {
+ if(!kit||!id||!std::isfinite(value))return -1;std::string_view key=id;
+ if(key=="master"){if(value<0||value>1.5)return -1;kit->master=float(value);return 0;}
+ if(key.size()<3||key[0]<'0'||key[0]>'9'||key[1]!='_')return -1;auto& p=kit->params[key[0]-'0'];key.remove_prefix(2);
+ if(key=="tune"&&value>=.5&&value<=2)p.tune=value;else if(key=="decay"&&value>=.2&&value<=3)p.decay=value;else if(key=="level"&&value>=0&&value<=1.5)p.level=float(value);else return -1;return 0;
+}
+int ls_kit_process(LSDrumKit* kit,float* out,std::uint32_t frames) noexcept {
+ if(!kit||!out||frames>65536)return -1;
+ for(unsigned i=0;i<frames;++i){float sum=0;for(auto& voice:kit->voices)sum+=voice.render();out[i]=std::tanh(sum*.8f)*kit->master;}return 0;
+}
+struct LSSampleMixer {
+ struct Layer {std::vector<float> samples;float level=1;};
+ struct Voice {int note;std::uint32_t index;float velocity;};
+ std::array<Layer,128> layers;std::array<Voice,48> voices{};unsigned count=0,limit;
+ explicit LSSampleMixer(unsigned n):limit(n){}
+};
+LSSampleMixer* ls_samples_create(std::uint32_t max) noexcept {if(!max||max>48)return nullptr;try{return new LSSampleMixer(max);}catch(...){return nullptr;}}
+void ls_samples_destroy(LSSampleMixer* p) noexcept {delete p;}
+int ls_samples_load(LSSampleMixer* p,int note,const float* data,std::uint32_t count,float level) noexcept {
+ if(!p||p->count||note<0||note>127||!data||count>192000*600||!std::isfinite(level)||level<0||level>1)return -1;
+ for(unsigned i=0;i<count;++i)if(!std::isfinite(data[i]))return -1;
+ try{p->layers[note].samples.assign(data,data+count);p->layers[note].level=level;return 0;}catch(...){return -1;}
+}
+int ls_samples_event(LSSampleMixer* p,std::uint32_t type,int note,float velocity) noexcept {
+ if(!p||note<0||note>127||type>3||!std::isfinite(velocity)||velocity<0||velocity>1)return -1;
+ if(type==3){p->count=0;return 0;}if(type!=1||p->layers[note].samples.empty())return 0;
+ if(p->count==p->limit){std::move(p->voices.begin()+1,p->voices.begin()+p->count,p->voices.begin());--p->count;}
+ p->voices[p->count++]={note,0,velocity*p->layers[note].level};return 0;
+}
+int ls_samples_process(LSSampleMixer* p,float* mono,std::uint32_t frames) noexcept {
+ if(!p||!mono||frames>65536)return -1;if(!p->count)return 0;
+ for(unsigned i=0;i<frames;++i){float sum=0;for(unsigned j=0;j<p->count;++j){auto& v=p->voices[j];auto& samples=p->layers[v.note].samples;if(v.index<samples.size())sum+=samples[v.index++]*v.velocity;}mono[i]=std::tanh(mono[i]+sum);}
+ unsigned keep=0;for(unsigned i=0;i<p->count;++i)if(p->voices[i].index<p->layers[p->voices[i].note].samples.size())p->voices[keep++]=p->voices[i];p->count=keep;return 0;
+}

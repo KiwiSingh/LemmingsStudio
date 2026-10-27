@@ -278,40 +278,40 @@ public final class AudioEngine {
         case .analog:           return AnalogSynth(name: track.name, sampleRate: sampleRate)
         case .guitar:           return GuitarInstrument(sampleRate: sampleRate)
         case .drums:
-            if track.sequencerLayers.contains(where: { $0.samplePath != nil }) {
+            if track.sequencerLayers.contains(where: { $0.samplePath != nil || $0.embeddedSamples != nil }) {
                 return SampleLayerDrumKit(name: track.name, genre: track.drumGenre, layers: track.sequencerLayers, sampleRate: sampleRate)
             }
             return DrumKit(name: track.name, genre: track.drumGenre, sampleRate: sampleRate)
         case .indianPercussion:
             let base = IndianPercussion(sampleRate: sampleRate)
-            if track.sequencerLayers.contains(where: { $0.samplePath != nil }) {
+            if track.sequencerLayers.contains(where: { $0.samplePath != nil || $0.embeddedSamples != nil }) {
                 return SampleLayerHybridInstrument(name: track.name, base: base, layers: track.sequencerLayers, sampleRate: sampleRate)
             }
             return base
         case .bhangraDhol:
             let base = IndianPercussion(sampleRate: sampleRate)
-            if track.sequencerLayers.contains(where: { $0.samplePath != nil }) {
+            if track.sequencerLayers.contains(where: { $0.samplePath != nil || $0.embeddedSamples != nil }) {
                 return SampleLayerHybridInstrument(name: track.name, base: base, layers: track.sequencerLayers, sampleRate: sampleRate)
             }
             return base
         case .sequencer:
-            if track.sequencerLayers.contains(where: { $0.samplePath != nil }) {
+            if track.sequencerLayers.contains(where: { $0.samplePath != nil || $0.embeddedSamples != nil }) {
                 return SampleLayerDrumKit(name: track.name, genre: track.drumGenre, layers: track.sequencerLayers, sampleRate: sampleRate)
             }
             return DrumKit(name: track.name, genre: track.drumGenre, sampleRate: sampleRate)
         case .bhangraArchitect:
             let base = BhangraArchitectInstrument(sampleRate: sampleRate)
-            if track.sequencerLayers.contains(where: { $0.samplePath != nil }) {
+            if track.sequencerLayers.contains(where: { $0.samplePath != nil || $0.embeddedSamples != nil }) {
                 return SampleLayerHybridInstrument(name: track.name, base: base, layers: track.sequencerLayers, sampleRate: sampleRate)
             }
             return base
         case .guaracha2C:
-            if track.sequencerLayers.contains(where: { $0.samplePath != nil }) {
+            if track.sequencerLayers.contains(where: { $0.samplePath != nil || $0.embeddedSamples != nil }) {
                 return SampleLayerDrumKit(name: track.name, genre: .guaracha, layers: track.sequencerLayers, sampleRate: sampleRate)
             }
             return DrumKit(name: track.name, genre: .guaracha, sampleRate: sampleRate)
         case .bailaton:
-            if track.sequencerLayers.contains(where: { $0.samplePath != nil }) {
+            if track.sequencerLayers.contains(where: { $0.samplePath != nil || $0.embeddedSamples != nil }) {
                 return SampleLayerDrumKit(name: track.name, genre: track.drumGenre, layers: track.sequencerLayers, sampleRate: sampleRate)
             }
             return DrumKit(name: track.name, genre: track.drumGenre, sampleRate: sampleRate)
@@ -321,7 +321,7 @@ public final class AudioEngine {
             // lanes, route them through the Dubstep DrumKit so Kick/Snare/Hat do
             // not all become wobble-bass notes. A pure plug-in lane rack is still
             // handled by the hosted-AU branch above.
-            if track.sequencerLayers.contains(where: { $0.samplePath != nil }) {
+            if track.sequencerLayers.contains(where: { $0.samplePath != nil || $0.embeddedSamples != nil }) {
                 return SampleLayerDrumKit(name: track.name, genre: .dubstep, layers: track.sequencerLayers, sampleRate: sampleRate)
             }
             return DrumKit(name: track.name, genre: .dubstep, sampleRate: sampleRate)
@@ -821,7 +821,7 @@ public final class AudioEngine {
         // becomes an unrelated drum note or a bassy wrong hit. This was one of
         // the paths that made Dubstep Wrangler poison EDM/Tech House after kit
         // switching.
-        if layer.source == .builtIn || layer.source == .splice || layer.samplePath != nil { return [base] }
+        if layer.source == .builtIn || layer.source == .splice || layer.samplePath != nil || layer.embeddedSamples != nil { return [base] }
         return arpeggiatedPitches(base: base, track: track)
     }
 

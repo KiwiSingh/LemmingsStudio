@@ -1,0 +1,476 @@
+{
+  "baseline": "4a2c0cf1b137e21152fa9d8cf9844f2c5ec777fc",
+  "scope": "stock device/source rendering; live hardware and VoxGarden gates remain open",
+  "devices": [
+    {
+      "device": "Room Space",
+      "category": "native_audio_processor",
+      "reference_behavior": "reverb"
+    },
+    {
+      "device": "Tempo Delay",
+      "category": "native_audio_processor",
+      "reference_behavior": "delay"
+    },
+    {
+      "device": "Motion Filter",
+      "category": "native_audio_processor",
+      "reference_behavior": "filter"
+    },
+    {
+      "device": "Eight-Band EQ",
+      "category": "native_audio_processor",
+      "reference_behavior": "eq8"
+    },
+    {
+      "device": "Dynamics Compressor",
+      "category": "native_audio_processor",
+      "reference_behavior": "compressor"
+    },
+    {
+      "device": "Pitch Corrector",
+      "category": "native_audio_processor",
+      "reference_behavior": "tune"
+    },
+    {
+      "device": "Sample Align",
+      "category": "native_audio_processor",
+      "reference_behavior": "align"
+    },
+    {
+      "device": "Subtractive Synth",
+      "category": "source_instrument_controls",
+      "reference_behavior": "Analog Synth"
+    },
+    {
+      "device": "Drive Amp",
+      "category": "native_audio_processor",
+      "reference_behavior": "saturation"
+    },
+    {
+      "device": "Pattern Arp",
+      "category": "midi_scheduling",
+      "reference_behavior": "original AudioEngine MIDI/arp plan; transparent audio slot"
+    },
+    {
+      "device": "FX Rack",
+      "category": "reference_pass_through",
+      "reference_behavior": "original registry rack, not a new nested rack engine"
+    },
+    {
+      "device": "Motion Pan",
+      "category": "native_audio_processor",
+      "reference_behavior": "autopan"
+    },
+    {
+      "device": "Bass Synth",
+      "category": "source_instrument_controls",
+      "reference_behavior": "LemmingBass"
+    },
+    {
+      "device": "Beat Stutter",
+      "category": "native_audio_processor",
+      "reference_behavior": "repeat"
+    },
+    {
+      "device": "Note Bounce",
+      "category": "midi_scheduling",
+      "reference_behavior": "original AudioEngine MIDI/arp plan; transparent audio slot"
+    },
+    {
+      "device": "Speaker Cabinet",
+      "category": "native_audio_processor",
+      "reference_behavior": "cabinet"
+    },
+    {
+      "device": "Channel Shaper",
+      "category": "native_audio_processor",
+      "reference_behavior": "channel"
+    },
+    {
+      "device": "Chord Builder",
+      "category": "midi_scheduling",
+      "reference_behavior": "original AudioEngine MIDI/arp plan; transparent audio slot"
+    },
+    {
+      "device": "Chorus Ensemble",
+      "category": "native_audio_processor",
+      "reference_behavior": "chorus"
+    },
+    {
+      "device": "Modal Mallet",
+      "category": "source_instrument_controls",
+      "reference_behavior": "Analog Synth"
+    },
+    {
+      "device": "Body Resonator",
+      "category": "native_audio_processor",
+      "reference_behavior": "resonator"
+    },
+    {
+      "device": "CV Instrument Bridge",
+      "category": "unavailable_external_endpoint",
+      "reference_behavior": "preserved slot; no silent external/CV substitute"
+    },
+    {
+      "device": "CV Trigger Bridge",
+      "category": "unavailable_external_endpoint",
+      "reference_behavior": "preserved slot; no silent external/CV substitute"
+    },
+    {
+      "device": "Analog Drift",
+      "category": "source_instrument_controls",
+      "reference_behavior": "Analog Synth"
+    },
+    {
+      "device": "Drum Drive Bus",
+      "category": "native_audio_processor",
+      "reference_behavior": "drumbuss"
+    },
+    {
+      "device": "Drum Matrix",
+      "category": "source_instrument_controls",
+      "reference_behavior": "Drum Machine"
+    },
+    {
+      "device": "Synth Clap",
+      "category": "source_instrument_controls",
+      "reference_behavior": "Drum Machine"
+    },
+    {
+      "device": "Synth Clang",
+      "category": "source_instrument_controls",
+      "reference_behavior": "Drum Machine"
+    },
+    {
+      "device": "Synth Cymbal",
+      "category": "source_instrument_controls",
+      "reference_behavior": "Drum Machine"
+    },
+    {
+      "device": "Synth Hat",
+      "category": "source_instrument_controls",
+      "reference_behavior": "Drum Machine"
+    },
+    {
+      "device": "Synth Kick",
+      "category": "source_instrument_controls",
+      "reference_behavior": "Drum Machine"
+    },
+    {
+      "device": "Synth Snare",
+      "category": "source_instrument_controls",
+      "reference_behavior": "Drum Machine"
+    },
+    {
+      "device": "Synth Tone",
+      "category": "source_instrument_controls",
+      "reference_behavior": "Drum Machine"
+    },
+    {
+      "device": "Tube Drive",
+      "category": "native_audio_processor",
+      "reference_behavior": "saturation"
+    },
+    {
+      "device": "Space Echo",
+      "category": "native_audio_processor",
+      "reference_behavior": "delay"
+    },
+    {
+      "device": "FX Architect",
+      "category": "native_audio_processor",
+      "reference_behavior": "architect"
+    },
+    {
+      "device": "Electric Keys",
+      "category": "source_instrument_controls",
+      "reference_behavior": "Analog Synth"
+    },
+    {
+      "device": "Particle Synth",
+      "category": "source_instrument_controls",
+      "reference_behavior": "Analog Synth"
+    },
+    {
+      "device": "Envelope Tracker",
+      "category": "native_audio_processor",
+      "reference_behavior": "analyzer"
+    },
+    {
+      "device": "Three-Band EQ",
+      "category": "native_audio_processor",
+      "reference_behavior": "eq3"
+    },
+    {
+      "device": "Noise Erode",
+      "category": "native_audio_processor",
+      "reference_behavior": "erosion"
+    },
+    {
+      "device": "External FX Bridge",
+      "category": "unavailable_external_endpoint",
+      "reference_behavior": "preserved slot; no silent external/CV substitute"
+    },
+    {
+      "device": "External Instrument Bridge",
+      "category": "unavailable_external_endpoint",
+      "reference_behavior": "preserved slot; no silent external/CV substitute"
+    },
+    {
+      "device": "Filtered Delay",
+      "category": "native_audio_processor",
+      "reference_behavior": "delay"
+    },
+    {
+      "device": "Noise Gate",
+      "category": "native_audio_processor",
+      "reference_behavior": "gate"
+    },
+    {
+      "device": "Bus Compressor",
+      "category": "native_audio_processor",
+      "reference_behavior": "glue"
+    },
+    {
+      "device": "Grain Echo",
+      "category": "native_audio_processor",
+      "reference_behavior": "delay"
+    },
+    {
+      "device": "Grain Cloud",
+      "category": "native_audio_processor",
+      "reference_behavior": "character"
+    },
+    {
+      "device": "Hybrid Space",
+      "category": "native_audio_processor",
+      "reference_behavior": "reverb"
+    },
+    {
+      "device": "Percussion Pads",
+      "category": "source_instrument_controls",
+      "reference_behavior": "Drum Machine"
+    },
+    {
+      "device": "Instrument Layer Rack",
+      "category": "reference_pass_through",
+      "reference_behavior": "original registry rack, not a new nested rack engine"
+    },
+    {
+      "device": "LFO",
+      "category": "native_audio_processor",
+      "reference_behavior": "analyzer"
+    },
+    {
+      "device": "Peak Limiter",
+      "category": "native_audio_processor",
+      "reference_behavior": "limiter"
+    },
+    {
+      "device": "Loop Recorder",
+      "category": "native_audio_processor",
+      "reference_behavior": "repeat"
+    },
+    {
+      "device": "Morph Synth",
+      "category": "source_instrument_controls",
+      "reference_behavior": "Analog Synth"
+    },
+    {
+      "device": "MIDI Rack",
+      "category": "reference_pass_through",
+      "reference_behavior": "original registry rack, not a new nested rack engine"
+    },
+    {
+      "device": "Multiband Processor",
+      "category": "native_audio_processor",
+      "reference_behavior": "compressor"
+    },
+    {
+      "device": "Note Gate Length",
+      "category": "midi_scheduling",
+      "reference_behavior": "original AudioEngine MIDI/arp plan; transparent audio slot"
+    },
+    {
+      "device": "FM Matrix",
+      "category": "source_instrument_controls",
+      "reference_behavior": "Analog Synth"
+    },
+    {
+      "device": "Drive",
+      "category": "native_audio_processor",
+      "reference_behavior": "saturation"
+    },
+    {
+      "device": "Stomp Box",
+      "category": "native_audio_processor",
+      "reference_behavior": "saturation"
+    },
+    {
+      "device": "Phase Flange",
+      "category": "native_audio_processor",
+      "reference_behavior": "chorus"
+    },
+    {
+      "device": "Pitch Tool",
+      "category": "midi_scheduling",
+      "reference_behavior": "original AudioEngine MIDI/arp plan; transparent audio slot"
+    },
+    {
+      "device": "Poly Synth",
+      "category": "source_instrument_controls",
+      "reference_behavior": "Analog Synth"
+    },
+    {
+      "device": "Note Randomizer",
+      "category": "midi_scheduling",
+      "reference_behavior": "original AudioEngine MIDI/arp plan; transparent audio slot"
+    },
+    {
+      "device": "Bit Crusher",
+      "category": "native_audio_processor",
+      "reference_behavior": "redux"
+    },
+    {
+      "device": "Tuned Resonators",
+      "category": "native_audio_processor",
+      "reference_behavior": "resonator"
+    },
+    {
+      "device": "Multi-Drive",
+      "category": "native_audio_processor",
+      "reference_behavior": "saturation"
+    },
+    {
+      "device": "Multisampler",
+      "category": "source_instrument_controls",
+      "reference_behavior": "controls_for_current_track_source"
+    },
+    {
+      "device": "Saturation",
+      "category": "native_audio_processor",
+      "reference_behavior": "saturation"
+    },
+    {
+      "device": "Scale Mapper",
+      "category": "midi_scheduling",
+      "reference_behavior": "original AudioEngine MIDI/arp plan; transparent audio slot"
+    },
+    {
+      "device": "Mod Shaper",
+      "category": "native_audio_processor",
+      "reference_behavior": "shaper"
+    },
+    {
+      "device": "Frequency Shifter",
+      "category": "native_audio_processor",
+      "reference_behavior": "chorus"
+    },
+    {
+      "device": "Simple Sampler",
+      "category": "source_instrument_controls",
+      "reference_behavior": "controls_for_current_track_source"
+    },
+    {
+      "device": "Spectral Body",
+      "category": "native_audio_processor",
+      "reference_behavior": "resonator"
+    },
+    {
+      "device": "Spectral Freeze",
+      "category": "native_audio_processor",
+      "reference_behavior": "character"
+    },
+    {
+      "device": "Spectrum Analyzer",
+      "category": "native_audio_processor",
+      "reference_behavior": "analyzer"
+    },
+    {
+      "device": "String Modeler",
+      "category": "source_instrument_controls",
+      "reference_behavior": "Analog Synth"
+    },
+    {
+      "device": "Branch Tone",
+      "category": "source_instrument_controls",
+      "reference_behavior": "Analog Synth"
+    },
+    {
+      "device": "Pitch Tuner",
+      "category": "native_audio_processor",
+      "reference_behavior": "analyzer"
+    },
+    {
+      "device": "Gain Utility",
+      "category": "native_audio_processor",
+      "reference_behavior": "utility"
+    },
+    {
+      "device": "Vector Echo",
+      "category": "native_audio_processor",
+      "reference_behavior": "delay"
+    },
+    {
+      "device": "Vector FM Synth",
+      "category": "source_instrument_controls",
+      "reference_behavior": "Analog Synth"
+    },
+    {
+      "device": "Vector Grain Synth",
+      "category": "source_instrument_controls",
+      "reference_behavior": "Analog Synth"
+    },
+    {
+      "device": "Velocity Mapper",
+      "category": "midi_scheduling",
+      "reference_behavior": "original AudioEngine MIDI/arp plan; transparent audio slot"
+    },
+    {
+      "device": "Record Distortion",
+      "category": "native_audio_processor",
+      "reference_behavior": "vinyl"
+    },
+    {
+      "device": "Voice Coder",
+      "category": "native_audio_processor",
+      "reference_behavior": "vocoder"
+    },
+    {
+      "device": "Table Synth",
+      "category": "source_instrument_controls",
+      "reference_behavior": "Analog Synth"
+    },
+    {
+      "device": "Bhangra Architect",
+      "category": "source_instrument_controls",
+      "reference_behavior": "Bhangra Architect"
+    },
+    {
+      "device": "2C",
+      "category": "source_instrument_controls",
+      "reference_behavior": "2C"
+    },
+    {
+      "device": "Bailaton",
+      "category": "source_instrument_controls",
+      "reference_behavior": "Bailaton"
+    },
+    {
+      "device": "Oscillatron",
+      "category": "source_instrument_controls",
+      "reference_behavior": "Oscillatron"
+    },
+    {
+      "device": "LemmingBass",
+      "category": "source_instrument_controls",
+      "reference_behavior": "LemmingBass"
+    },
+    {
+      "device": "Dubstep Wrangler",
+      "category": "source_instrument_controls",
+      "reference_behavior": "Dubstep Wrangler"
+    }
+  ]
+}

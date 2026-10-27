@@ -15,3 +15,7 @@ LS_API int ls_instrument_event(LSInstrument*, std::uint32_t type, int note, floa
 LS_API int ls_instrument_process(LSInstrument*, float* output, std::uint32_t frames) noexcept;
 // Deterministic comparison hook: actual Swift-generated guitar excitation.
 LS_API int ls_guitar_excitation(LSInstrument*, int note, const float*, std::uint32_t count) noexcept;
+
+struct LSParameter;
+LS_API LSInstrument* ls_instrument_create_stock(const char* kind,double rate,const LSParameter*,std::uint32_t count,std::uint64_t seed) noexcept;
+LS_API int ls_instrument_set(LSInstrument*,const char* id,double value) noexcept;

@@ -1,4 +1,5 @@
 import Foundation
+import AVFoundation
 import SwiftUI
 
 struct ProjectDocument: Codable {
@@ -262,6 +263,7 @@ struct SequencerLayerDoc: Codable {
     var steps: [Bool]
     var velocity: Float
     var samplePath: String?
+    var embeddedSamples: [Float]?
     var pluginTargetID: String?
     var octaveOffset: Int?
     var pan: Float?
@@ -275,6 +277,7 @@ struct SequencerLayerDoc: Codable {
         steps = layer.steps
         velocity = layer.velocity
         samplePath = layer.samplePath
+        embeddedSamples = layer.embeddedSamples ?? portableLayerSamples(layer.samplePath)
         pluginTargetID = layer.pluginTargetID
         octaveOffset = layer.octaveOffset
         pan = layer.pan
@@ -294,6 +297,7 @@ struct SequencerLayerDoc: Codable {
                                    volume: volume ?? 1)
         if let id { layer.id = id }
         layer.steps = steps
+        layer.embeddedSamples = embeddedSamples
         return layer
     }
 }
@@ -535,4 +539,16 @@ struct StepPatternDoc: Codable {
         pattern.steps = steps
         return pattern
     }
+}
+
+// Project compatibility: user one-shots travel with the shared JSON document.
+private func portableLayerSamples(_ path: String?) -> [Float]? {
+    guard let path, let file = try? AVAudioFile(forReading: URL(fileURLWithPath:path)), file.length > 0, file.length <= 192000 * 600,
+          let buffer=AVAudioPCMBuffer(pcmFormat:file.processingFormat,frameCapacity:AVAudioFrameCount(file.length)) else {return nil}
+    do {try file.read(into:buffer)} catch {return nil}
+    guard let channels=buffer.floatChannelData else {return nil}
+    let count=Int(buffer.frameLength),channelCount=max(1,Int(buffer.format.channelCount))
+    var samples=[Float](repeating:0,count:count)
+    for i in 0..<count {for c in 0..<channelCount {samples[i]+=channels[c][i]};samples[i]/=Float(channelCount)}
+    return samples.allSatisfy({$0.isFinite}) ? samples : nil
 }

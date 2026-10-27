@@ -43,7 +43,7 @@ ColumnLayout {
                                 }
                             }
                         }
-                        Label{Layout.fillWidth:true;wrapMode:Text.Wrap;text:card.modelData.nativeInstrument ? "Original native Analog Synth · parameters restored from the shared project. Automation awaits the native graph." : "Playback for this device is not available in this Windows build yet. Its settings are saved with the project.";font.pixelSize:10;opacity:0.65}
+                        Label{Layout.fillWidth:true;wrapMode:Text.Wrap;text:card.modelData.audioStatus;font.pixelSize:10;opacity:0.65}
                     }
                 }
             }

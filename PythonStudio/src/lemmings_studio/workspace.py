@@ -12,7 +12,7 @@ from .workspace_document import WorkspaceDocument,identity,numeric
 from .project_contract import ProjectFile
 from .workspace_audio import REFERENCE,Snapshot,WorkspaceRenderer
 from .audio import AudioEngine
-from .stock_contract import ANALOG_DEVICES
+from .stock_contract import ANALOG_DEVICES,BUILTIN_DEVICES,EFFECT_FAMILIES,MIDI_DEVICES,RACK_DEVICES
 
 WORKSPACES=['Session','Arrangement','Piano Roll','Step Sequencer','Devices','Automation','Mixer']
 BROWSER=['Library','Tracks','Splice','Samples','Sounds','Pads','FX/Plugins']
@@ -38,10 +38,11 @@ class WorkspaceController(QObject):
         self.clip_id='';self.note_id='';self.selected_tracks=[self.track_id]
         self.workspace='Session';self.persist_preferences=persist_preferences;self.browser='Library';self.dock='AI';self.detail='Devices'
         self.theme=REFERENCE['themes'][0]['name'];self.status='Ready';self.path=None;self.beat=0.;self.snap=.25
-        self.search='';self.scenes=8;self.master_gain=1.;self.epoch=0;self.pending=0;self.cancel=Event();self.tap_times=[]
+        self.search='';self.scenes=8;self.metronome=True;self.master_gain=1.;self.epoch=0;self.pending=0;self.cancel=Event();self.tap_times=[]
         self.jobs=ThreadPoolExecutor(max_workers=1,thread_name_prefix='LemmingsWorkspace')
         self.completed.connect(self._complete)
         self.engine=AudioEngine()
+        self.render_update=QTimer(self);self.render_update.setSingleShot(True);self.render_update.setInterval(120);self.render_update.timeout.connect(self.refresh_playback)
         self.engine.on_position=self.position.emit;self.engine.on_finished=self.audioFinished.emit
         self.position.connect(self._position);self.audioFinished.connect(self._audio_finished)
         self.settings_path=Path(os.environ.get('LEMMINGS_DIAGNOSTICS_DIR',str(Path(__file__).resolve().parents[3]/'.local'))).parent/'workspace-settings.json'
@@ -113,7 +114,8 @@ class WorkspaceController(QObject):
         devices=deepcopy(selected.get('devices',[]))
         for device in devices:
             definition=next((x for x in REFERENCE['devices'] if x['kind']==device['kind']),None)
-            device['nativeInstrument']=selected.get('kind')=='Analog Synth' and device['kind'] in ANALOG_DEVICES
+            device['nativeInstrument']=device['kind'] in BUILTIN_DEVICES
+            device['audioStatus']=('Source instrument controls · original Mac parameter mapping' if device['nativeInstrument'] else 'Original native stereo processing · playback and export' if device['kind'] in EFFECT_FAMILIES else 'MIDI scheduling · original Mac rules' if device['kind'] in MIDI_DEVICES else 'Registry rack · pass-through behavior matches the current Mac build' if device['kind'] in RACK_DEVICES else 'External endpoint unavailable · project state preserved')
             device['controls']=deepcopy(definition['params']) if definition else []
             for p in device['controls']: p['value']=device.get('params',{}).get(p['id'],definition['defaults'].get(p['id'],p['min']))
         instrument=next((d for d in REFERENCE['devices'] if d['kind']=={'Analog Synth':'Subtractive Synth','Drum Machine':'Drum Matrix','Sequencer':'Drum Matrix'}.get(selected.get('kind'),selected.get('kind'))),None)
@@ -137,7 +139,7 @@ class WorkspaceController(QObject):
                 'glyph':next(t['glyph'] for t in REFERENCE['themes'] if t['name']==self.theme),
                 'catalog':[d for d in REFERENCE['devices'] if self.search.lower() in d['kind'].lower()],
                 'scales':[s['name'] for s in REFERENCE['scales']],'trackKinds':KINDS,'kits':list(REFERENCE['drumKits']),'scenes':self.scenes,
-                'masterGain':self.master_gain,'masterDevices':data.get('masterDevices',[]),'automationNodes':nodes,'tempoPoints':data.get('tempoPoints',[]),'tempoAutomationEnabled':data.get('tempoAutomationEnabled',False),'groups':data.get('groups',[]),'returns':data.get('returnBuses',[]),'snap':self.snap}
+                'metronome':self.metronome,'masterGain':self.master_gain,'masterDevices':data.get('masterDevices',[]),'automationNodes':nodes,'tempoPoints':data.get('tempoPoints',[]),'tempoAutomationEnabled':data.get('tempoAutomationEnabled',False),'groups':data.get('groups',[]),'returns':data.get('returnBuses',[]),'snap':self.snap}
         return self._state_cache
 
     @Slot(str,'QVariantMap')
@@ -145,8 +147,8 @@ class WorkspaceController(QObject):
         try:
             before=self.document.revision
             self._command(name,dict(args))
-            if self.document.revision!=before:
-                self.engine.stop();self.transportChanged.emit()
+            if self.document.revision!=before or name in ('workspace','masterGain','metronome'):
+                self.render_update.start()
             self.notify()
         except Exception as error: self.message(str(error))
 
@@ -206,7 +208,7 @@ class WorkspaceController(QObject):
         elif name=='audition': self.audition(int(a['pitch']))
         elif name=='chord': self.insert_chord()
         elif name=='printSteps': self.print_steps(tid)
-        elif name=='masterGain':self.master_gain=numeric(a['value'],0,1);self.engine.stop();self.transportChanged.emit()
+        elif name=='masterGain':self.master_gain=numeric(a['value'],0,1)
         elif name=='addReturn':
             from .workspace_document import make_device
             self.document.edit('Add return bus',lambda d:d['returnBuses'].append({'id':identity(),'name':f'Return {len(d["returnBuses"])+1}','volume':.8,'pan':0.,'mute':False,'devices':[make_device('Room Space')]}))
@@ -304,18 +306,20 @@ class WorkspaceController(QObject):
         elif name=='save': self.save_project(a.get('asNew',False))
         elif name=='importAudio': self.import_audio()
         elif name=='export': self.export_audio()
+        elif name=='metronome':self.metronome=not self.metronome
+        elif name=='freeze':self.freeze_track(tid)
+        elif name=='unfreeze':self.document.edit('Unfreeze track',lambda d:WorkspaceDocument.track(d,tid).update(frozen=False,bounced=None))
         elif name=='cancel': self.cancel.set();self.status='Cancelling…'
         else: raise ValueError('This capability awaits its Windows engine/integration port')
         if name not in ('undo','redo','tap','cancel','open','save','importAudio','export'):self.status=name[0].upper()+name[1:]
 
     def audition(self,pitch):
-        if self.track()['kind'] not in ('Drum Machine','Sequencer'):
-            raise ValueError('Select a Drum Machine or Sequencer track to audition its actual drum kit')
-        from .workspace_document import new_project,make_track
+        if self.track()['kind']=='Audio (Recorded)':raise ValueError('Select an instrument track to audition')
+        from .workspace_document import new_project
         data=new_project();data['lengthBars']=1
-        track=make_track('Audition',self.track()['kind']);track['drumGenre']=self.track().get('drumGenre','Tech House')
-        track['clips']=[{'startBeat':0,'notes':[{'start':0,'pitch':pitch,'velocity':.9}]}];data['tracks']=[track]
-        self.engine.play(Snapshot(data),Path.cwd(),0,renderer_factory=WorkspaceRenderer)
+        track=deepcopy(self.track());track['mute']=False;track['solo']=False;track['groupID']=None;track['sends']=[];track['useStepSequencer']=False
+        track['audioClips']=[];track['clips']=[{'id':identity(),'startBeat':0,'isActive':True,'notes':[{'id':identity(),'start':0,'length':.5,'pitch':pitch,'velocity':.9}]}];data['tracks']=[track]
+        self.engine.play(Snapshot(data),self.path.parent if self.path else Path.cwd(),0,renderer_factory=WorkspaceRenderer)
         self.transportChanged.emit()
 
     def insert_chord(self):
@@ -332,7 +336,7 @@ class WorkspaceController(QObject):
 
     def print_steps(self,tid):
         track=WorkspaceDocument.track(self.document.data,tid);p=track['stepPattern']
-        if track['kind'] not in ('Drum Machine','Sequencer'):raise ValueError('Select a supported step-sequencer track')
+        if track['kind'] not in ('Drum Machine','Sequencer','Indian Percussion','Bhangra Dhol','Bhangra Architect','2C','Bailaton','Dubstep Wrangler'):raise ValueError('Select a step-sequencer track')
         length=p['stepCount']/p['stepsPerBeat'];clip_id=identity()
         start=max(0,round(self.beat/self.snap)*self.snap)
         def op(data):
@@ -394,10 +398,14 @@ class WorkspaceController(QObject):
             path=Path(name)
             if path.suffix.lower()!='.lemmingsproject':path=Path(str(path)+'.lemmingsproject')
         data=deepcopy(self.document.data);epoch=self.epoch
-        def saved(_):
+        base=self.path.parent if self.path else Path.cwd()
+        def write():
+            portable=ProjectFile(data).portable(base);portable.save(path);return portable.data
+        def saved(result):
             if self.epoch!=epoch:return
-            self.document.saved=data;self.path=path;self.status='Saved '+path.name
-        self.submit('Saving…',lambda:ProjectFile(data).save(path),saved)
+            if self.document.data==data:self.document.data=deepcopy(result)
+            self.document.saved=deepcopy(result);self.path=path;self.status='Saved '+path.name
+        self.submit('Saving…',write,saved)
 
     def import_audio(self):
         name,_=QFileDialog.getOpenFileName(None,'Import audio','','Audio (*.wav *.aif *.aiff *.flac *.ogg)')
@@ -420,14 +428,39 @@ class WorkspaceController(QObject):
             self.clip_id=clip['id'];self.status='Imported '+Path(name).name
         self.submit('Reading audio…',read,imported)
 
+    def freeze_track(self,tid):
+        original=deepcopy(self.track());epoch=self.epoch;data=deepcopy(self.document.data)
+        if original.get('frozen'):return
+        for track in data['tracks']:track['solo']=track['id']==tid
+        ends=[c['startBeat']+c.get('lengthBeats',4) for c in original.get('clips',[]) if c.get('isActive',True)]
+        ends += [c['startBeat']+(c.get('lengthBeatsOverride') or len(c.get('samples',[]))/c.get('sampleRate',48000)*data['bpm']/60) for c in original.get('audioClips',[]) if c.get('isActive',True)]
+        data['lengthBars']=max(1,math.ceil(max(ends or [data['beatsPerBar']])/data['beatsPerBar']))
+        base=self.path.parent if self.path else Path.cwd()
+        def render():
+            import numpy as np
+            audio=WorkspaceRenderer(Snapshot(data,1.,'arrangement',1.),base,cancelled=self.cancel)
+            return {'id':identity(),'startBeat':0,'samples':audio.output.mean(axis=1,dtype=np.float32).tolist(),'sampleRate':audio.rate,'displayName':'Frozen '+original['name'],'isActive':True,'loopEnabled':False}
+        def frozen(clip):
+            if self.epoch!=epoch:return
+            if WorkspaceDocument.track(self.document.data,tid)!=original:raise ValueError('Track changed while freezing; source preserved, render discarded')
+            self.document.edit('Freeze track',lambda d:WorkspaceDocument.track(d,tid).update(frozen=True,bounced=clip))
+            self.status='Frozen '+original['name']
+        self.submit('Freezing track…',render,frozen)
+
     def export_audio(self):
         name,_=QFileDialog.getSaveFileName(None,'Export WAV',self.document.data['name']+'.wav','WAV (*.wav)')
         if not name:return
-        snapshot=Snapshot(deepcopy(self.document.data),self.master_gain);target=Path(name)
-        self.submit('Rendering WAV…',lambda:WorkspaceRenderer(snapshot).export(target,self.cancel),lambda _:self.message('Exported '+target.name))
+        snapshot=Snapshot(deepcopy(self.document.data),self.master_gain,'stepSequencer' if self.workspace=='Step Sequencer' else 'arrangement',1.,self.metronome);target=Path(name)
+        self.submit('Rendering WAV…',lambda:WorkspaceRenderer(snapshot,self.path.parent if self.path else Path.cwd(),cancelled=self.cancel).export(target,self.cancel),lambda _:self.message('Exported '+target.name))
+
+    def refresh_playback(self):
+        if self.engine.running:
+            scope='stepSequencer' if self.workspace=='Step Sequencer' else 'pianoRoll' if self.workspace=='Piano Roll' else 'arrangement'
+            self.engine.replace(Snapshot(deepcopy(self.document.data),self.master_gain,scope,0.,self.metronome),self.path.parent if self.path else Path.cwd(),WorkspaceRenderer)
 
     def play(self):
-        self.engine.play(Snapshot(deepcopy(self.document.data),self.master_gain),self.path.parent if self.path else Path.cwd(),self.beat,renderer_factory=WorkspaceRenderer)
+        scope='stepSequencer' if self.workspace=='Step Sequencer' else 'pianoRoll' if self.workspace=='Piano Roll' else 'arrangement'
+        self.engine.play(Snapshot(deepcopy(self.document.data),self.master_gain,scope,0.,self.metronome),self.path.parent if self.path else Path.cwd(),self.beat,renderer_factory=WorkspaceRenderer)
         self.transportChanged.emit()
 
     def stop(self):self.engine.stop();self.transportChanged.emit()

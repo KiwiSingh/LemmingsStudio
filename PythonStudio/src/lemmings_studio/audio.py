@@ -2,7 +2,7 @@
 from __future__ import annotations
 from copy import deepcopy
 from pathlib import Path
-from threading import Event, Thread
+from threading import Event, Thread, Lock
 from urllib.parse import unquote, urlparse
 import math
 import os
@@ -133,17 +133,37 @@ class AudioEngine:
         self.on_position = lambda generation, beat: None
         self.on_finished = lambda generation, message: None
         self.output_device: int | None = None
+        self._renderer_lock=Lock();self._pending_renderer=None;self._update_stop=Event()
 
     @property
     def running(self) -> bool:
         return bool(self._thread and self._thread.is_alive() and not self._stop.is_set())
 
     def stop(self) -> None:
+        self._update_stop.set()
         self._stop.set()
         self.generation += 1
 
+    def replace(self,project,base,renderer_factory):
+        """Prepare edits without stopping the writer; publish a whole valid snapshot."""
+        if not self.running:return
+        self._update_stop.set();cancelled=Event();self._update_stop=cancelled
+        with self._renderer_lock:self._pending_renderer=None
+        generation=self.generation;snapshot=deepcopy(project)
+        def prepare():
+            try:
+                candidate=renderer_factory(snapshot,base,cancelled=cancelled)
+                if cancelled.is_set() or self._stop.is_set() or generation!=self.generation:return
+                with self._renderer_lock:
+                    if not cancelled.is_set() and generation==self.generation:self._pending_renderer=(generation,candidate)
+            except Exception as error:
+                if not cancelled.is_set() and generation==self.generation:self.on_finished(generation,f'Playback update failed; current audio retained: {error}')
+        Thread(target=prepare,name='LemmingsAudioUpdate',daemon=True).start()
+
     def play(self, project: Project, base: Path, start_beat: float = 0, renderer_factory=None) -> None:
         old_thread = self._thread
+        self._update_stop.set()
+        with self._renderer_lock:self._pending_renderer=None
         self._stop.set()
         stopped = Event()
         self._stop = stopped
@@ -158,14 +178,30 @@ class AudioEngine:
                 if stopped.is_set():
                     return
                 import sounddevice as sd
-                renderer = (renderer_factory or Renderer)(snapshot, base)
-                position = max(0, round(start_beat*60/snapshot.tempo*renderer.rate))
+                renderer = renderer_factory(snapshot,base,cancelled=stopped) if renderer_factory and getattr(renderer_factory,"supports_cancellation",False) else (renderer_factory or Renderer)(snapshot,base)
+                position = max(0, renderer.frame_at_beat(start_beat) if hasattr(renderer,"frame_at_beat") else round(start_beat*60/snapshot.tempo*renderer.rate))
                 with sd.OutputStream(samplerate=renderer.rate, channels=2, dtype="float32", blocksize=2048, latency="high", device=device) as stream:
                     while position < renderer.length and not stopped.is_set():
+                        previous=None;previous_position=position
+                        with self._renderer_lock:
+                            if self._pending_renderer and self._pending_renderer[0]==generation:
+                                candidate=self._pending_renderer[1];self._pending_renderer=None
+                                if candidate.rate==renderer.rate:
+                                    previous=renderer
+                                    beat=renderer.beat_at_frame(position) if hasattr(renderer,'beat_at_frame') else position/renderer.rate*snapshot.tempo/60
+                                    renderer=candidate
+                                    position=renderer.frame_at_beat(beat) if hasattr(renderer,'frame_at_beat') else position
                         count = min(2048, renderer.length-position)
-                        stream.write(renderer.block(position, count))
+                        if count<=0:break
+                        block=renderer.block(position,count)
+                        if previous is not None:
+                            cross=min(count,len(previous.block(previous_position,count)),round(renderer.rate*.02))
+                            if cross:
+                                block=block.copy();weight=np.linspace(0,1,cross,dtype=np.float32)[:,None]
+                                block[:cross]=previous.block(previous_position,cross)*(1-weight)+block[:cross]*weight
+                        stream.write(block)
                         position += count
-                        self.on_position(generation, position/renderer.rate*snapshot.tempo/60)
+                        self.on_position(generation, renderer.beat_at_frame(position) if hasattr(renderer,"beat_at_frame") else position/renderer.rate*snapshot.tempo/60)
                 if not stopped.is_set():
                     self.on_finished(generation, "Playback finished")
             except Exception as error:

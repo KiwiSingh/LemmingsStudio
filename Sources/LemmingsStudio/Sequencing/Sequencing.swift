@@ -224,6 +224,8 @@ public struct SequencerLayer: Identifiable, Hashable, Sendable {
     public var steps: [Bool]
     public var velocity: Float
     public var samplePath: String?
+    /// Portable one-shot payload; the original path remains provenance.
+    public var embeddedSamples: [Float]? = nil
     public var pluginTargetID: String?
     /// Per-lane performance controls. `note` remains the lane/cell identity,
     /// while plug-in lanes can play the project root note plus this octave.
@@ -261,7 +263,7 @@ public struct SequencerLayer: Identifiable, Hashable, Sendable {
         // One-shot sample lanes are also keyed by their lane note in the sample
         // layer instrument. Until real per-lane sample pitch shifting exists,
         // do not transpose the routing note or the sample layer will be missed.
-        if source == .splice || samplePath != nil {
+        if source == .splice || samplePath != nil || embeddedSamples != nil {
             return max(0, min(127, note))
         }
 

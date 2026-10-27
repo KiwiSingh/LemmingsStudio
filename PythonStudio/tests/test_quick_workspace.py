@@ -148,13 +148,11 @@ def test_split_duplicate_and_automation_survive_shared_save(quick,tmp_path):
 def test_no_silent_render_substitution(monkeypatch):
     from lemmings_studio.workspace_audio import WorkspaceRenderer,Snapshot
     doc=WorkspaceDocument();tid=doc.data['tracks'][0]['id'];cid=doc.create_clip(tid);doc.add_note(tid,cid,0,60)
-    doc.track(doc.data,tid)['kind']='Oscillatron'
-    with pytest.raises(ValueError,match='not yet ported'):WorkspaceRenderer(Snapshot(doc.data))
+    doc.track(doc.data,tid)['kind']='Unknown Instrument'
+    with pytest.raises(ValueError,match='not ported'):WorkspaceRenderer(Snapshot(doc.data))
     doc.track(doc.data,tid)['kind']='Drum Machine'
-    doc.automation_point(tid,'instrument','master',0,.5)
-    with pytest.raises(ValueError,match='automation'):WorkspaceRenderer(Snapshot(doc.data))
-    doc.data['tempoAutomationEnabled']=True
-    with pytest.raises(ValueError,match='Tempo-automation'):WorkspaceRenderer(Snapshot(doc.data))
+    doc.data['channelFormat']='5.1'
+    with pytest.raises(ValueError,match='Multichannel'):WorkspaceRenderer(Snapshot(doc.data))
 
 
 def test_exact_reference_values_from_swift():
@@ -200,3 +198,35 @@ def test_loop_resize_repeats_original_unit_and_keeps_boundary_half_open():
     clip=doc.clip(doc.track(doc.data,tid),cid)
     assert len(clip['notes'])==8 and clip['loopLengthBeats']==4
     assert all(n['start']+n['length']<=16 for n in clip['notes'])
+
+
+def test_freeze_restore_undo_and_cancel_preserve_source(quick,monkeypatch):
+    if not os.environ.get('LEMMINGS_NATIVE_LIBRARY'):pytest.skip('Requires native freeze render')
+    _,_,c=quick;tid=c.document.data['tracks'][0]['id'];c.track_id=tid
+    c.document.data['lengthBars']=1;cid=c.document.create_clip(tid);c.document.add_note(tid,cid,0,60,.5,.8)
+    original=deepcopy(c.document.data)
+    monkeypatch.setattr(c,'submit',lambda label,job,done:done(job()))
+    c.freeze_track(tid);track=c.document.track(c.document.data,tid)
+    assert track['frozen'] and max(map(abs,track['bounced']['samples']))>.01
+    assert track['clips']==original['tracks'][0]['clips']
+    c.command('unfreeze',{});assert not c.track()['frozen']
+    c.command('undo',{});assert c.track()['frozen']
+    c.command('undo',{});assert c.document.data==original
+    c.cancel.set()
+    with pytest.raises(InterruptedError):c.freeze_track(tid)
+    assert c.document.data==original
+
+
+def test_knob_edit_schedules_audio_update_without_stopping_transport(quick,monkeypatch):
+    from types import SimpleNamespace
+    _,_,c=quick;original=c.engine;updates=[]
+    proxy=SimpleNamespace(running=True,generation=1,replace=lambda *a:updates.append(a),stop=lambda:None)
+    try:
+        c.engine=proxy;tid=c.document.data['tracks'][0]['id'];c.track_id=tid
+        c.command('addDevice',{'kind':'Subtractive Synth'})
+        device=c.track()['devices'][0]
+        c.command('deviceParam',{'device':device['id'],'param':'cutoff','value':900})
+        QTest.qWait(200)
+        assert c.engine.running and updates
+        assert updates[-1][0].data['tracks'][0]['devices'][0]['params']['cutoff']==900
+    finally:c.render_update.stop();c.engine=original

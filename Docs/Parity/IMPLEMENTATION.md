@@ -157,3 +157,11 @@ The first native melodic slice adds original AnalogSynth and GuitarInstrument,
 shared MIDI note scheduling, rack parameters and actual Swift audio comparisons.
 See [MELODIC_INSTRUMENTS.md](MELODIC_INSTRUMENTS.md) for evidence, tolerances,
 random-excitation handling and the remaining sound/native-graph gates.
+
+## Broad stock sound phase
+
+[FULL_STOCK_SOUND.md](FULL_STOCK_SOUND.md) and the per-device
+[coverage ledger](STOCK_SOUND_COVERAGE.json) supersede earlier stock-audio-pending
+statements. Original sources/effects, portable sample layers, warp and worker-side
+session processing are implemented. Full live transport/hardware, external-hosting,
+VoxGarden and release acceptance remain open; the ledger states the exact boundary.

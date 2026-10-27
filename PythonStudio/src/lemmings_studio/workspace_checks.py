@@ -51,16 +51,25 @@ def verify(window,output):
     import numpy as np
     assert np.max(np.abs(renderer.block(0,min(renderer.rate,renderer.length))))>.01
     renderer.export(output/'original-drum-workspace.wav')
-    for kind in ('Analog Synth','Guitar'):
+    for kind in ('Analog Synth','Guitar','LemmingBass','Oscillatron','Indian Percussion','Bhangra Dhol','Bhangra Architect','Drum Machine','Sequencer','2C','Bailaton','Dubstep Wrangler'):
         musical=deepcopy(original);musical['lengthBars']=1
         track=musical['tracks'][0];track['kind']=kind
-        track['clips']=[{'id':identity(),'startBeat':0,'lengthBeats':4,'isActive':True,'notes':[{'id':identity(),'start':.25,'length':.5,'pitch':60,'velocity':.8}]}]
+        track['clips']=[{'id':identity(),'startBeat':0,'lengthBeats':4,'isActive':True,'notes':[{'id':identity(),'start':.25,'length':.5,'pitch':36 if kind in ('Drum Machine','Sequencer','2C','Bailaton','Dubstep Wrangler') else 60,'velocity':.8}]}]
         saved=output/(kind.replace(' ','-')+'-check.lemmingsproject');ProjectFile(musical).save(saved)
         native=WorkspaceRenderer(Snapshot(ProjectFile.load(saved).data))
         assert np.max(np.abs(native.output))>.01
         assert not native.output[:1000].any()
         native.export(output/(kind.replace(' ','-')+'-workspace.wav'))
         checks[kind.replace(' ','_').lower()+'_render_reopen']=True
+    from .native_audio import NativeAudio
+    from .native_effects import render_effect
+    from .workspace_audio import library_path
+    from .stock_contract import EFFECT_FAMILIES
+    native_engine=NativeAudio(library_path());signal=np.column_stack([np.sin(np.arange(4096)*.07)*.2,np.cos(np.arange(4096)*.13)*.15]).astype(np.float32)
+    for kind in EFFECT_FAMILIES:
+        actual=render_effect(native_engine,kind,signal,48000)
+        assert actual.shape==signal.shape and np.isfinite(actual).all(),kind
+    checks['all_stock_effect_binaries']=len(EFFECT_FAMILIES)
     checks.update(seven_workspaces_two_sizes=True,eleven_original_palettes=True,native_drum_render=True,
                   qml_errors_absent=not window.warnings)
     if window.warnings:raise RuntimeError('\n'.join(window.warnings))

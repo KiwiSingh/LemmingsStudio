@@ -29,6 +29,8 @@ clip=workspace.create_clip(tid,4,8);workspace.add_note(tid,clip,0,36,.23,.8)
 workspace.toggle_step(tid,36,0);workspace.toggle_step(tid,42,0)
 workspace.automation_point(tid,'instrument','master',0,.7)
 workspace.data['tracks'][1]['futureWindowsState']={'preserve':True}
+from lemmings_studio.workspace_document import identity
+workspace.data['tracks'][1]['sequencerLayers']=[{'id':identity(),'name':'Portable','source':'Splice Sample','note':36,'steps':[False]*16,'velocity':.75,'samplePath':'missing-original.wav','embeddedSamples':[0.,.125,-.25,.5],'volume':1.,'pan':0.,'octaveOffset':0}]
 ProjectFile(workspace.data).save(root/'windows-created.lemmingsproject')
 subprocess.run([str(root/'project-contract-check'),str(root/'swift.lemmingsproject'),
                 str(root/'windows-created.lemmingsproject'),str(root/'windows-returned.lemmingsproject')],check=True)
@@ -39,6 +41,7 @@ assert received['tracks'][1]['clips'][0]['notes']==workspace.data['tracks'][1]['
 assert received['tracks'][1]['stepPattern']==workspace.data['tracks'][1]['stepPattern']
 assert received['tracks'][1]['automationLanes']==workspace.data['tracks'][1]['automationLanes']
 assert received['tracks'][1]['futureWindowsState']=={'preserve':True}
+assert received['tracks'][1]['sequencerLayers']==workspace.data['tracks'][1]['sequencerLayers']
 assert received['masterDevices']==workspace.data['masterDevices']
 assert received['returnBuses']==workspace.data['returnBuses']
 print('PASS: Windows workspace-created project opened/resaved by actual Swift')

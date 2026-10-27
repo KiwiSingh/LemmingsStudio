@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 project(LemmingsAudio VERSION 0.1.0 LANGUAGES CXX)
-add_library(lemmings_audio SHARED drums.cpp instruments.cpp)
+add_library(lemmings_audio SHARED drums.cpp instruments.cpp effects.cpp warp.cpp metronome.cpp)
 target_compile_features(lemmings_audio PUBLIC cxx_std_20)
 target_include_directories(lemmings_audio PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 set_target_properties(lemmings_audio PROPERTIES CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN YES)

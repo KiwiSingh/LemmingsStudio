@@ -54,3 +54,11 @@ Next acceptance work is driven by the remaining column above. Full workspace
 parity must not be marked complete until these interactions and packaged-Mac
 comparisons pass. UTM is for compatibility; native Windows hardware remains
 required for latency/performance and the long-session soak.
+
+### Sound implementation update
+
+Original stock sound, effect chains and automation now have native processing;
+transport metronome and Track Freeze/Unfreeze are connected. See
+[FULL_STOCK_SOUND.md](FULL_STOCK_SOUND.md) for numerical evidence and the remaining
+live audio/recording/hosting acceptance gates. Earlier unavailable-audio labels in
+this historical workspace-phase ledger are superseded by that implementation.
