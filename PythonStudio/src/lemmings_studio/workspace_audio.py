@@ -210,6 +210,7 @@ class WorkspaceRenderer(Renderer):
                 if not (layer.get('source')=='Built-in Drum' and note in NOTES or layer.get('source')=='Splice Sample' or layer.get('samplePath') or layer.get('embeddedSamples') is not None):note=max(0,min(127,note+layer.get('octaveOffset',0)*12))
                 velocity=max(0,min(1,velocity*layer.get('volume',1)))
             pitches,velocity,duration=midi_plan(note,velocity,length,track,data,REFERENCE)
+            if step:duration=length # original live grid releases at the next boundary
             if arp and not (step and layer and (layer.get('source') in ('Built-in Drum','Splice Sample') or layer.get('samplePath') or layer.get('embeddedSamples') is not None)):
                 p=arp.get('params',{});octaves=max(1,min(4,rounded(p.get('octaves',2))));pool=[max(0,min(127,n+12*o)) for n in pitches for o in range(octaves)]
                 if step:
@@ -239,7 +240,7 @@ class WorkspaceRenderer(Renderer):
         if source.ndim!=1 or not np.isfinite(source).all() or not 8000<=rate<=192000:raise ValueError('Invalid embedded audio')
         if clip.get('warpEnabled'):
             original=clip.get('originalTempo',120)
-            if original>0 and abs(original/timeline.bpm(0)-1)>=.001:source=warp(engine,source,original/timeline.bpm(0),clip.get('warpMode','Beat'))
+            if original>0 and abs(original/timeline.tempo-1)>=.001:source=warp(engine,source,original/timeline.tempo,clip.get('warpMode','Beat'))
         start_beat=clip['startBeat'];natural=max(.25,len(source)/rate*timeline.bpm(0)/60-clip.get('trimStartBeats',0));length=max(.25,clip['lengthBeatsOverride'] if clip.get('lengthBeatsOverride') is not None else natural)
         start=max(0,timeline.frame(start_beat));end=min(self.length,timeline.frame(start_beat+length))
         if end<=start:return

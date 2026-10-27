@@ -10,7 +10,7 @@ class Timeline:
         if not math.isfinite(self.tempo) or not 20<=self.tempo<=400 or not 0<self.length<=4000:raise ValueError('Invalid session tempo/length')
         points=sorted(data.get('tempoPoints',[]),key=lambda p:p['beat']) if data.get('tempoAutomationEnabled') else []
         if any(not math.isfinite(p['beat']) or not math.isfinite(p['bpm']) or not 20<=p['bpm']<=400 for p in points):raise ValueError('Invalid tempo automation')
-        if data.get('tempoAutomationEnabled'):
+        if data.get('tempoAutomationEnabled') and points:
             self.point_beats=[p['beat'] for p in points] or [0];self.point_bpms=[p['bpm'] for p in points] or [120]
             self.grid=np.arange(math.ceil(max(1,self.length)*16)+1,dtype=np.float64)/16
             mid=(self.grid[:-1]+self.grid[1:])*.5

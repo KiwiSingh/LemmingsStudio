@@ -233,3 +233,12 @@ def test_native_analyzer_measurements_are_readable(engine):
         assert effect.get('peak')==pytest.approx(.03,abs=1e-6)
         assert effect.get('rms')==pytest.approx(.03,abs=1e-6)
         assert effect.get('activity')==0 and effect.get('rate')==1
+
+
+def test_empty_tempo_curve_uses_project_tempo_and_live_steps_keep_boundaries(engine):
+    doc,tid=small_project('Bhangra Architect');doc.data['bpm']=doc.data['tempo']=137;doc.data['tempoAutomationEnabled']=True
+    timeline=Timeline(doc.data,48000);assert timeline.bpm(0)==137
+    track=doc.data['tracks'][0];track['clips']=[];track['useStepSequencer']=True;doc.toggle_step(tid,84,0)
+    track=doc.data['tracks'][0];track['devices']=[make_device('Note Gate Length')];track['devices'][0]['params']['gate']=.1
+    renderer=WorkspaceRenderer(Snapshot(doc.data,scope='stepSequencer'));events=renderer.note_events(track,doc.data,timeline)
+    assert events[0][0]==0 and events[1][0]==timeline.frame(.25)
