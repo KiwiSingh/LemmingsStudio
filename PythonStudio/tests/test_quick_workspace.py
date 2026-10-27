@@ -162,14 +162,30 @@ def test_exact_reference_values_from_swift():
     if not root:pytest.skip('Requires actual Swift reference export')
     from lemmings_studio.workspace_audio import REFERENCE
     actual=json.loads((Path(root).parent/'workspace-reference.json').read_text(encoding='utf-8'))
-    # SwiftUI semantic track colours differ across macOS releases. Windows
-    # deliberately uses the recorded reference host's colours, not CI's OS tint.
-    assert all(actual[k]==REFERENCE[k] for k in ('themes','devices','scales','drumKits'))
+    # Match all original static values exactly. Five palette fields and the
+    # track colours use named SwiftUI colours whose RGB values changed by OS.
+    for key in ('devices','scales','drumKits','semanticPaletteFields'):
+        assert actual[key]==REFERENCE[key],key
+    assert len(actual['themes'])==len(REFERENCE['themes'])==11
+    for recorded,exported in zip(REFERENCE['themes'],actual['themes']):
+        assert (recorded['name'],recorded['glyph'])==(exported['name'],exported['glyph'])
+        semantic=REFERENCE['semanticPaletteFields'].get(recorded['name'],{})
+        assert recorded['palette'].keys()==exported['palette'].keys()
+        for field,value in recorded['palette'].items():
+            incoming=exported['palette'][field]
+            if field not in semantic or actual['referenceSystemMajor']==REFERENCE['referenceSystemMajor']:
+                assert incoming==value,(recorded['name'],field)
+            else:
+                token=semantic[field]
+                assert incoming[:3]==value[:3] # opacity is source-defined
+                assert incoming[3:]==actual['systemColors'][token][1:]
+                assert value[3:]==REFERENCE['systemColors'][token][1:]
+    tokens=['blue','orange','green','pink','purple','teal','red','yellow']
+    assert actual['trackColors']==[actual['systemColors'][k] for k in tokens]
+    assert REFERENCE['trackColors']==[REFERENCE['systemColors'][k] for k in tokens]
     if actual['referenceSystemMajor']==REFERENCE['referenceSystemMajor']:
         assert actual['trackColors']==REFERENCE['trackColors']
-    else:
-        import re
-        assert len(actual['trackColors'])==8 and all(re.fullmatch(r'#[0-9a-f]{6}',s) for s in actual['trackColors'])
+
 
 
 def test_loop_resize_repeats_original_unit_and_keeps_boundary_half_open():

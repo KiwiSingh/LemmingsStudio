@@ -7388,6 +7388,28 @@
       "name" : "Yaman \/ Kalyan (raga ≈12-TET)"
     }
   ],
+  "semanticPaletteFields" : {
+    "Cyberpunk 2077-ish" : {
+      "glassHighlight" : "cyan",
+      "glassStroke" : "yellow",
+      "grid" : "yellow"
+    },
+    "Liquid Glass" : {
+      "glowA" : "cyan",
+      "glowB" : "purple"
+    }
+  },
+  "systemColors" : {
+    "blue" : "#0091ff",
+    "cyan" : "#3cd3fe",
+    "green" : "#30d158",
+    "orange" : "#ff9230",
+    "pink" : "#ff375f",
+    "purple" : "#db34f2",
+    "red" : "#ff4245",
+    "teal" : "#00d2e0",
+    "yellow" : "#ffd600"
+  },
   "themes" : [
     {
       "glyph" : "🐾",

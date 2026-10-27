@@ -119,6 +119,15 @@ for theme in LemmingsVisualTheme.allCases {
     }
     themeRows.append(["name":theme.rawValue,"glyph":theme.logoGlyph,"palette":palette])
 }
+workspaceReference["semanticPaletteFields"] = [
+    "Liquid Glass":["glowA":"cyan","glowB":"purple"],
+    LemmingsVisualTheme.cyberpunkNightCity.rawValue:["grid":"yellow","glassStroke":"yellow","glassHighlight":"cyan"]
+]
+let semanticColors: [(String,Color)] = [("blue",.blue),("orange",.orange),("green",.green),("pink",.pink),("purple",.purple),("teal",.teal),("red",.red),("yellow",.yellow),("cyan",.cyan)]
+workspaceReference["systemColors"] = Dictionary(uniqueKeysWithValues: semanticColors.map { name,color in
+    let c=NSColor(color).usingColorSpace(.sRGB)!
+    return (name,String(format:"#%02x%02x%02x",Int((c.redComponent*255).rounded()),Int((c.greenComponent*255).rounded()),Int((c.blueComponent*255).rounded())))
+})
 workspaceReference["themes"] = themeRows
 workspaceReference["trackColors"] = [Color.blue,Color.orange,Color.green,Color.pink,Color.purple,Color.teal,Color.red,Color.yellow].map { value -> String in
     let c=NSColor(value).usingColorSpace(.sRGB)!

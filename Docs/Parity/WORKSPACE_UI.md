@@ -9,7 +9,7 @@ unchanged. This ledger records implementation, not full acceptance.
 | Area | Reference | Windows work and evidence | Still required |
 |---|---|---|---|
 | Shell | `ProDAWShell.swift` | Custom Qt Quick transport, horizontal/vertical split panes, detail deck, browser/dock, status undo; 1024×768 and 1600×900 captures | Packaged Mac comparison, exact material/shadow/motion, scaling/multiple monitors/accessibility |
-| Themes | `LemmingsTheme.swift` | All 11 exact sRGB palettes/glyphs, original background gradients/glows; Swift-export equality check | Native material equivalence and visual approval; system track colours pinned to the recorded macOS 27 host (macOS 15 uses different semantic tints) |
+| Themes | `LemmingsTheme.swift` | All 11 exact sRGB palettes/glyphs, original background gradients/glows; Swift-export equality check | Native material equivalence and visual approval; five named-colour palette fields and system track colours pinned to the recorded macOS 27 host (macOS 15 uses different semantic tints) |
 | Session | `SessionMatrixView` | Scene grid, clip/scene launch matching Mac's seek-and-start behavior, empty MIDI slot creation | Stop/context actions, full session interaction comparison |
 | Arrangement | `Arrangement.swift` | Track/clip selection, MIDI creation, clip move/resize, waveform display, duplicate/delete/split, half-open loop repetition, playhead seek | Selection ranges, marquee, consolidation, full menus, drag/drop, warp/freeze controls |
 | Piano Roll | `PianoRoll.swift` | Note draw/move/resize/delete, velocity, snap, quantize, zoom; actual mouse test | Full pitch range controls, multi-note selection, clipboard, generative/theory tools and contextual actions |
