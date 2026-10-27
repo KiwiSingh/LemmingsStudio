@@ -381,5 +381,10 @@ try JSONSerialization.data(withJSONObject:sampleManifest,options:[.sortedKeys]).
 let sampleProject=Project();let sampleTrack=Track(name:"Portable",kind:.drums,color:.blue);sampleTrack.sequencerLayers=[sampleLayer];sampleProject.tracks=[sampleTrack]
 let sampleDocument=try ProjectDocument.decode(ProjectDocument(project:sampleProject).encoded()).makeProject()
 require(sampleDocument.tracks[0].sequencerLayers[0].embeddedSamples==sampleData,"Portable layer payload lost")
+var changedSample=sampleDocument.tracks[0].sequencerLayers[0]
+changedSample.samplePath="replacement.wav"
+require(changedSample.embeddedSamples==nil,"Replacing a sample retained stale embedded sound")
+changedSample.embeddedSamples=sampleData;changedSample.samplePath=nil
+require(changedSample.embeddedSamples==nil,"Clearing a sample retained embedded sound")
 try ProjectDocument(project:sampleProject).encoded().write(to:output.deletingLastPathComponent().appendingPathComponent("portable-sample.lemmingsproject"))
 print("PASS: Original drum/hybrid sample voices and portable layer document")

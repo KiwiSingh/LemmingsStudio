@@ -223,7 +223,7 @@ public struct SequencerLayer: Identifiable, Hashable, Sendable {
     public var note: Int
     public var steps: [Bool]
     public var velocity: Float
-    public var samplePath: String?
+    public var samplePath: String? { didSet { embeddedSamples = nil } }
     /// Portable one-shot payload; the original path remains provenance.
     public var embeddedSamples: [Float]? = nil
     public var pluginTargetID: String?
