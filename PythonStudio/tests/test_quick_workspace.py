@@ -47,7 +47,7 @@ def test_edits_preserve_unknown_state_and_are_transactional(tmp_path):
 
 def test_rejects_drum_step_on_wrong_source():
     doc=WorkspaceDocument();original=deepcopy(doc.data)
-    with pytest.raises(ValueError,match='Drum Machine'):doc.toggle_step(doc.data['tracks'][0]['id'],36,0)
+    with pytest.raises(ValueError,match='step-sequencer'):doc.toggle_step(doc.data['tracks'][0]['id'],36,0)
     assert doc.data==original
 
 
@@ -163,7 +163,7 @@ def test_exact_reference_values_from_swift():
     actual=json.loads((Path(root).parent/'workspace-reference.json').read_text(encoding='utf-8'))
     # Match all original static values exactly. Five palette fields and the
     # track colours use named SwiftUI colours whose RGB values changed by OS.
-    for key in ('devices','scales','drumKits','semanticPaletteFields'):
+    for key in ('devices','scales','drumKits','percussionLanes','percussionGrooves','semanticPaletteFields'):
         assert actual[key]==REFERENCE[key],key
     assert len(actual['themes'])==len(REFERENCE['themes'])==11
     for recorded,exported in zip(REFERENCE['themes'],actual['themes']):
@@ -230,3 +230,16 @@ def test_knob_edit_schedules_audio_update_without_stopping_transport(quick,monke
         assert c.engine.running and updates
         assert updates[-1][0].data['tracks'][0]['devices'][0]['params']['cutoff']==900
     finally:c.render_update.stop();c.engine=original
+
+
+def test_original_bhangra_lanes_and_groove_are_editable(quick):
+    _,window,c=quick
+    c.command('addTrack',{'kind':'Bhangra Architect'});tid=c.track_id
+    c.command('workspace',{'value':'Step Sequencer'})
+    assert len(c.state['stepLanes'])==14 and c.state['stepLanes'][0]['name']=='Na / Chimta'
+    c.command('step',{'pitch':84,'step':0});assert 84 in c.track()['stepPattern']['steps'][0]['hits']
+    tempo=c.document.data['bpm'];name=c.state['percussionGrooves'][0]['name']
+    c.command('percussionGroove',{'name':name})
+    assert c.document.data['bpm']==tempo and c.track()['stepPattern']['steps'][3]['hits']
+    assert len(c.track()['sequencerLayers'])==14 and c.track()['sequencerLayers'][12]['note']==84
+    assert c.track_id==tid and not window.warnings

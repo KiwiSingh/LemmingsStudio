@@ -144,6 +144,10 @@ workspaceReference["drumKits"] = Dictionary(uniqueKeysWithValues: DrumGenre.allC
         (String(id.rawValue), ["tune":p.tune,"decay":p.decay,"tone":p.tone,"drive":Double(p.drive),"level":Double(p.level)])
     }))
 })
+workspaceReference["percussionLanes"] = BhangraToolkit.layers.map { ["name":$0.name,"note":$0.note,"source":$0.source.rawValue,"velocity":Double($0.velocity),"pan":Double($0.pan),"volume":Double($0.volume),"octaveOffset":$0.octaveOffset] as [String:Any] }
+workspaceReference["percussionGrooves"] = BhangraToolkit.all.map { groove -> [String:Any] in
+    ["name":groove.name,"bpm":groove.bpm,"notes":groove.steps.map { stroke in stroke.map {60+IndianStroke.allCases.firstIndex(of:$0)!} ?? -1 }]
+}
 let referenceBytes = try JSONSerialization.data(withJSONObject: workspaceReference, options: [.prettyPrinted, .sortedKeys])
 try referenceBytes.write(to: output.deletingLastPathComponent().appendingPathComponent("workspace-reference.json"))
 print("PASS: Exported original themes, device parameters and drum kits")

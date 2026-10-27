@@ -40,3 +40,6 @@ BUILTIN_DEVICES=MAPPED_INSTRUMENT_DEVICES|frozenset(['Multisampler','Simple Samp
 DEVICE_TRACKS={kind:'Analog Synth' for kind in ANALOG_DEVICES}
 DEVICE_TRACKS.update({kind:'Drum Machine' for kind in ['Drum Matrix','Percussion Pads','Synth Clap','Synth Clang','Synth Cymbal','Synth Hat','Synth Kick','Synth Snare','Synth Tone']})
 DEVICE_TRACKS.update({'Bass Synth':'LemmingBass','LemmingBass':'LemmingBass','Oscillatron':'Oscillatron','Bhangra Architect':'Bhangra Architect','2C':'2C','Bailaton':'Bailaton','Dubstep Wrangler':'Dubstep Wrangler'})
+
+STEP_KINDS=frozenset(['Drum Machine','Sequencer','Indian Percussion','Bhangra Dhol','Bhangra Architect','2C','Bailaton','Dubstep Wrangler'])
+DRUM_LANES=[{'name':name,'note':note} for name,note in [('Kick',36),('808 Sub',35),('Snare',38),('Clap',39),('Rim',37),('Closed Hat',42),('Open Hat',46),('Tom',45),('Ride',51),('Crash',49)]]

@@ -9,7 +9,7 @@ def make_device(kind):
     return {'id':identity(),'kind':kind,'bypassed':False,'mono':False,'sidechainEnabled':False,'params':deepcopy(next(d['defaults'] for d in REFERENCE['devices'] if d['kind']==kind))}
 
 from .project_contract import ProjectFile, _entities
-from .stock_contract import ANALOG_DEVICES,MAPPED_INSTRUMENT_DEVICES,DEVICE_TRACKS
+from .stock_contract import ANALOG_DEVICES,MAPPED_INSTRUMENT_DEVICES,DEVICE_TRACKS,STEP_KINDS
 
 
 def identity():
@@ -139,8 +139,8 @@ class WorkspaceDocument:
         step=int(numeric(step,0,63));pitch=int(numeric(pitch,0,127))
         def op(data):
             track=self.track(data,track_id)
-            if track['kind'] not in ('Drum Machine','Sequencer'):
-                raise ValueError('Choose a Drum Machine or Sequencer track for built-in drum lanes')
+            if track['kind'] not in STEP_KINDS:
+                raise ValueError('Choose a step-sequencer instrument track')
             track['useStepSequencer']=True
             pattern=track['stepPattern']
             while len(pattern['steps'])<=step:
