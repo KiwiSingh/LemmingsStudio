@@ -41,6 +41,7 @@ struct ArrangementView: View {
     @State private var clipCreateDrag: ClipCreateDrag?
     @State private var marquee: ArrangementMarquee?
     @State private var stemSplitDialogClip: AudioClip?
+    @State private var audioToMIDIRequest: AudioToMIDIRequest?
     @State private var stemSplitDialogModel: StemModel = .htdemucs
     @State private var stemSplitDialogBackend: StemBackend = .auto
     @State private var lastTrackpadMagnification: CGFloat = 1
@@ -79,6 +80,27 @@ struct ArrangementView: View {
                 model: $stemSplitDialogModel,
                 backend: $stemSplitDialogBackend
             )
+        }
+        .confirmationDialog(
+            "Create MIDI from Audio",
+            isPresented: Binding(
+                get: { audioToMIDIRequest != nil },
+                set: { if !$0 { audioToMIDIRequest = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Melody to MIDI") { runAudioToMIDI(.melody) }
+            Button("Harmony to MIDI") { runAudioToMIDI(.harmony) }
+            Button("Drums to MIDI") { runAudioToMIDI(.drums) }
+            Button("Cancel", role: .cancel) { audioToMIDIRequest = nil }
+        } message: {
+            if let request = audioToMIDIRequest {
+                Text(
+                    request.targetTrackID == nil
+                        ? "Choose how ‘\(request.clip.displayName)’ should be transcribed. LemmingsStudio will create a suitable MIDI track."
+                        : "Choose how ‘\(request.clip.displayName)’ should be transcribed onto the destination MIDI track."
+                )
+            }
         }
     }
 
@@ -126,6 +148,15 @@ struct ArrangementView: View {
                 Divider()
                 Button("Dembow Drum Kit") { app.quickDrumKitInArrangement(.dembow) }
                 Button("Moombah Drum Kit") { app.quickDrumKitInArrangement(.moombah) }
+                Divider()
+                Button("Afro House Drum Kit") { app.quickDrumKitInArrangement(.afroHouse) }
+                Button("Amapiano Drum Kit") { app.quickDrumKitInArrangement(.amapiano) }
+                Button("Jersey Club Drum Kit") { app.quickDrumKitInArrangement(.jerseyClub) }
+                Button("UK Garage Drum Kit") { app.quickDrumKitInArrangement(.ukGarage) }
+                Button("Drum & Bass Drum Kit") { app.quickDrumKitInArrangement(.drumAndBass) }
+                Button("Trap Drum Kit") { app.quickDrumKitInArrangement(.trap) }
+                Button("Phonk Drum Kit") { app.quickDrumKitInArrangement(.phonk) }
+                Button("Baile Funk Drum Kit") { app.quickDrumKitInArrangement(.baileFunk) }
             } label: {
                 Label("Generators", systemImage: "wand.and.stars")
             }
@@ -167,9 +198,33 @@ struct ArrangementView: View {
     private var arrangementDropTypes: [UTType] { [.fileURL, .audio, .movie, .text, .item] }
 
     private func handleMediaOrPluginDrop(providers: [NSItemProvider], on track: Track?) -> Bool {
+        // Internal LemmingsStudio drags (plugins, samples and Splice rows) are
+        // NSString/public.text providers. public.text also conforms to
+        // public.item, so sending them through Finder import first causes the
+        // media loader to claim the drop and silently discard the payload.
+        for provider in providers {
+            let isFileLike =
+                provider.canLoadObject(ofClass: NSURL.self)
+                || provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier)
+                || provider.hasItemConformingToTypeIdentifier(UTType.audio.identifier)
+                || provider.hasItemConformingToTypeIdentifier(UTType.movie.identifier)
+
+            let isTextLike =
+                provider.canLoadObject(ofClass: NSString.self)
+                || provider.hasItemConformingToTypeIdentifier(UTType.text.identifier)
+                || provider.hasItemConformingToTypeIdentifier(UTType.plainText.identifier)
+                || provider.hasItemConformingToTypeIdentifier("public.utf8-plain-text")
+                || provider.hasItemConformingToTypeIdentifier("NSStringPboardType")
+
+            if isTextLike && !isFileLike {
+                return handlePluginDrop(providers: [provider], on: track)
+            }
+        }
+
         for provider in providers {
             if loadFinderFile(from: provider, on: track) { return true }
         }
+
         return handlePluginDrop(providers: providers, on: track)
     }
 
@@ -207,15 +262,6 @@ struct ArrangementView: View {
                 }
                 return true
             }
-        }
-        if provider.hasItemConformingToTypeIdentifier(UTType.text.identifier) {
-            provider.loadItem(forTypeIdentifier: UTType.text.identifier, options: nil) { item, _ in
-                let text = (item as? String) ?? (item as? Data).flatMap { String(data: $0, encoding: .utf8) }
-                guard let raw = text?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty else { return }
-                let url = raw.hasPrefix("file://") ? URL(string: raw) : URL(fileURLWithPath: raw)
-                if let url, url.isFileURL { importURL(url) }
-            }
-            return true
         }
         return false
     }
@@ -414,7 +460,7 @@ struct ArrangementView: View {
             HStack(spacing: 8) {
                 Button("M") { app.toggleMute(track) }.buttonStyle(.plain).foregroundStyle(track.mute ? Color.orange : LSTheme.dim)
                 Button("S") { app.toggleSolo(track) }.buttonStyle(.plain).foregroundStyle(track.solo ? Color.yellow : LSTheme.dim)
-                Button(track.armed ? "●" : "○") { app.toggleTrackArm(track) }
+                Button(track.armed ? "● Arm" : "○ Arm") { app.toggleTrackArm(track) }
                     .buttonStyle(.plain)
                     .foregroundStyle(track.armed ? LSTheme.record : LSTheme.dim)
                     .help(track.armed ? "Disarm track" : "Arm track for recording")
@@ -428,25 +474,7 @@ struct ArrangementView: View {
                     .frame(width: 44)
                     .foregroundStyle(track.audioInputMonitorMode == .off ? LSTheme.dim : LSTheme.focus)
                     .help(track.audioInputMonitorMode.helpText)
-                    Menu(shortInputDeviceLabel(track)) {
-                        Button("Refresh Inputs") { app.refreshAudioInputDevices() }
-                        Divider()
-                        ForEach(app.recorder.inputDevices) { device in
-                            Button(device.name + " · \(device.channelCount)ch") { app.setAudioInputDevice(for: track, uid: device.uid) }
-                        }
-                    }
-                    .menuStyle(.borderlessButton)
-                    .frame(width: 78)
-                    .help("Input device: \(track.audioInputDeviceName)")
-                    Menu("Ch \(track.audioInputChannelIndex + 1)") {
-                        let uid = track.audioInputDeviceUID ?? AudioRecorder.systemDefaultDeviceUID
-                        ForEach(0..<app.recorder.channelCount(for: uid), id: \.self) { index in
-                            Button(app.recorder.channelLabel(for: index, deviceUID: uid)) { app.setAudioInputChannel(for: track, channelIndex: index) }
-                        }
-                    }
-                    .menuStyle(.borderlessButton)
-                    .frame(width: 42)
-                    .help(app.recorder.inputName)
+
                 } else {
                     Button(track.loopDragEnabled ? "Loop" : "Trim") { track.loopDragEnabled.toggle() }
                         .buttonStyle(.plain)
@@ -461,6 +489,7 @@ struct ArrangementView: View {
                 }
             }
             .font(.caption.bold())
+            TrackRecordingInput(track:track)
         }
         .padding(.horizontal, 8).padding(.vertical, 7)
         .frame(width: trackHeaderWidth, height: laneHeight, alignment: .leading)
@@ -575,7 +604,37 @@ struct ArrangementView: View {
             Divider()
             Button("Quantize") { app.selectedClipID = clip.id; app.quantizeSelectedClip() }
             Button("Fit to Scale") { app.selectedClipID = clip.id; app.fitSelectedClipToScale() }
-            Button("Generative Disco") { app.selectedClipID = clip.id; app.generativeDisco(on: clip) }
+            Menu("Generative Disco") {
+                Button("Generate New Pattern") {
+                    app.selectedClipID = clip.id
+                    app.generativeDisco(on: clip)
+                }
+                Button("New Random Seed") {
+                    app.randomizeGenerativeDiscoSeed()
+                    app.selectedClipID = clip.id
+                    app.generativeDisco(on: clip)
+                }
+                Toggle(
+                    "Lock Seed",
+                    isOn: Binding(
+                        get: { app.generativeDiscoSeedLocked },
+                        set: { app.generativeDiscoSeedLocked = $0 }
+                    )
+                )
+                Divider()
+                Button("Regenerate Bass Only") {
+                    app.selectedClipID = clip.id
+                    app.generativeDisco(on: clip, regenerating: [.bass])
+                }
+                Button("Regenerate Harmony Only") {
+                    app.selectedClipID = clip.id
+                    app.generativeDisco(on: clip, regenerating: [.harmony])
+                }
+                Button("Regenerate Accents Only") {
+                    app.selectedClipID = clip.id
+                    app.generativeDisco(on: clip, regenerating: [.accents])
+                }
+            }
             Button("Open in Piano Roll") { app.selectedClipID = clip.id; openInPianoRoll() }
         }
         .gesture(clipDragGesture(id: clip.id, currentStart: clip.startBeat, sourceTrack: track, kind: .midi) { clip.startBeat = $0 })
@@ -587,7 +646,7 @@ struct ArrangementView: View {
         let x = CGFloat(clip.startBeat) * pxPerBeat
         return clipShell(name: clip.displayName, color: track.color, selected: app.isArrangementClipSelected(kind: "audio", id: clip.id), width: w, badge: clipFXBadge(clip)) {
             Canvas { ctx, size in
-                let samples = clip.activeSamples
+                let samples = clip.playbackPreviewSamples(projectTempo: app.project.tempo, maximumCount: max(2048, Int(size.width) * 8))
                 guard !samples.isEmpty else { return }
                 let columns = max(1, Int(size.width))
                 let stride = max(1, samples.count / columns)
@@ -651,7 +710,9 @@ struct ArrangementView: View {
                 Button("Double Tempo") { app.setClipTempo(clip, bpm: min(300, clip.originalTempo * 2), enableWarp: true) }
             }
             Divider()
-            Button("Create MIDI from Audio…") { app.assistantLog.append("clip: requested audio-to-MIDI for \(clip.displayName)") }
+            Button("Create MIDI from Audio…") {
+                requestAudioToMIDI(for: clip, targetTrack: nil)
+            }
             Button("Slice to MIDI") { app.sliceAudioClipToMIDI(clip) }
             Button("Stem Split Selected Clip…") {
                 selectAudioClip(clip, track: track)
@@ -870,12 +931,49 @@ struct ArrangementView: View {
                     case .midi:
                         app.moveMidiClip(id, to: target)
                     case .audio:
-                        app.moveAudioClip(id, to: target)
+                        if target.kind == .audio {
+                            app.moveAudioClip(id, to: target)
+                        } else if let clip = sourceTrack.audioClips.first(
+                            where: { $0.id == id }
+                        ) {
+                            requestAudioToMIDI(for: clip, targetTrack: target)
+                        }
                     }
                 } else {
                     finishRealtimeArrangementEdit()
                 }
             }
+    }
+
+    private struct AudioToMIDIRequest: Identifiable {
+        let id = UUID()
+        let clip: AudioClip
+        let targetTrackID: UUID?
+    }
+
+    private func requestAudioToMIDI(
+        for clip: AudioClip,
+        targetTrack: Track?
+    ) {
+        audioToMIDIRequest = AudioToMIDIRequest(
+            clip: clip,
+            targetTrackID: targetTrack?.id
+        )
+    }
+
+    private func runAudioToMIDI(_ mode: AudioToMIDIMode) {
+        guard let request = audioToMIDIRequest else { return }
+        audioToMIDIRequest = nil
+
+        let target = request.targetTrackID.flatMap { id in
+            app.project.tracks.first { $0.id == id }
+        }
+
+        app.createMIDIFromAudio(
+            request.clip,
+            mode: mode,
+            targetTrack: target
+        )
     }
 
     private func trackAtArrangementY(_ y: CGFloat) -> Track? {
@@ -885,6 +983,7 @@ struct ArrangementView: View {
     }
 
     private func finishRealtimeArrangementEdit() {
+        app.writeRecoverySnapshot()
         // Playback reads the Observable clip objects directly, so resize/move edits
         // are already live while the transport is rolling. Do not stop/rebuild the
         // engine during playback; that makes the gesture feel laggy and can retrigger
@@ -1051,7 +1150,12 @@ struct ArrangementView: View {
         guard let provider = providers.first else { return false }
         let consumeText: (String) -> Void = { text in
             DispatchQueue.main.async {
-                _ = app.handlePluginDropText(text, on: track, audioClip: audioClip)
+                let handled = app.handlePluginDropText(text, on: track, audioClip: audioClip)
+                if !handled {
+                    let preview = String(text.prefix(96))
+                    app.spliceStatus = "⚠️ Drop was not recognized: \(preview)"
+                    app.editStatus = "⚠️ Arrangement drop was not recognized"
+                }
                 pluginDropTargetID = nil
             }
         }

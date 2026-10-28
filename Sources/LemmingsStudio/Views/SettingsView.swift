@@ -36,6 +36,7 @@ struct LemmingsSettingsView: View {
                     case .plugins: pluginPane
                     case .library: userLibraryPane
                     case .splice: splicePane
+                    case .hostMode: hostModePane
                     case .voices: voicesPane
                     case .controllers: controllersPane
                     }
@@ -375,37 +376,131 @@ struct LemmingsSettingsView: View {
         }
     }
 
+    private var hostModePane: some View {
+        @Bindable var host = HostModeControlCenter.shared
+        return VStack(alignment: .leading, spacing: 16) {
+            SettingsHeader(title: "Host Mode", subtitle: "Connect the visionOS build to this Mac for plug-in hosting, remote editors, audio return, MIDI, automation, and desktop renders.")
+
+            HStack(spacing: 12) {
+                Image(systemName: host.isRunning ? "desktopcomputer.and.arrow.down" : "desktopcomputer")
+                    .font(.system(size: 28, weight: .semibold))
+                    .foregroundStyle(host.isRunning ? .green : .secondary)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(host.isRunning ? "Host Mode Running" : "Host Mode Stopped").font(.headline)
+                    Text(host.statusText).font(.caption).foregroundStyle(host.lastError == nil ? Color.secondary : Color.red)
+                }
+                Spacer()
+                Button(host.isRunning ? "Stop" : "Start") { host.toggle() }.buttonStyle(.borderedProminent)
+            }
+            .padding(14)
+            .background(Color.secondary.opacity(0.08))
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+
+            Form {
+                Toggle("Start Host Mode when LemmingsStudio opens", isOn: $host.autoStart)
+                Picker("Vision Pro Access", selection: $host.accessLevel) {
+                    ForEach(HostModeAccessLevel.allCases) { level in Text(level.rawValue).tag(level) }
+                }
+            }
+            Text(host.accessLevel.explanation).font(.caption).foregroundStyle(.secondary)
+
+            GroupBox("Pairing") {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        Text("Pairing Code")
+                        Spacer()
+                        Text(host.pairingCode).font(.system(.title2, design: .monospaced, weight: .bold)).textSelection(.enabled)
+                    }
+                    HStack {
+                        Button("Copy Code") { host.copyPairingCode() }.disabled(!host.isRunning)
+                        Button("Regenerate") { host.regeneratePairingCode() }.disabled(!host.isRunning)
+                        Spacer()
+                        Text(host.serviceName).font(.caption.monospaced()).foregroundStyle(.secondary)
+                    }
+                }.padding(.vertical, 4)
+            }
+
+            GroupBox("Connected Devices") {
+                VStack(alignment: .leading, spacing: 8) {
+                    if host.connectedDeviceNames.isEmpty {
+                        Text("No Vision Pro devices are currently connected.").foregroundStyle(.secondary)
+                    } else {
+                        ForEach(host.connectedDeviceNames, id: \.self) { name in
+                            HStack {
+                                Image(systemName: host.pairedDeviceNames.contains(name) ? "visionpro.badge.checkmark" : "visionpro")
+                                Text(name)
+                                Spacer()
+                                Text(host.pairedDeviceNames.contains(name) ? "Paired" : "Connecting").font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                        Button("Disconnect All") { host.disconnectAll() }.controlSize(.small)
+                    }
+                    Divider()
+                    HStack {
+                        Text("Hosted plug-in instances")
+                        Spacer()
+                        Text("\(host.hostedInstanceCount)").font(.headline.monospacedDigit())
+                    }
+                }.padding(.vertical, 4)
+            }
+
+            GroupBox("Trusted Vision Pro Devices") {
+                VStack(alignment: .leading, spacing: 8) {
+                    if host.trustedDeviceNames.isEmpty {
+                        Text("No remembered devices. A Vision Pro becomes trusted after successful pairing.").foregroundStyle(.secondary)
+                    } else {
+                        ForEach(host.trustedDeviceNames, id: \.self) { name in
+                            HStack {
+                                Label(name, systemImage: "checkmark.shield")
+                                Spacer()
+                                Button("Forget") { host.forgetTrustedDevice(name) }.controlSize(.small)
+                            }
+                        }
+                        Button("Forget All Devices", role: .destructive) { host.forgetAllTrustedDevices() }.controlSize(.small)
+                    }
+                }.padding(.vertical, 4)
+            }
+        }
+        .onAppear { host.refresh() }
+    }
+
     private var voicesPane: some View {
         @Bindable var store = app.voiceModels
-        return VStack(alignment: .leading, spacing: 14) {
-            SettingsHeader(title: "Singing Voices", subtitle: "Consent-first voice conversion repository, manual model import, and cloning guidance.")
-            HStack {
-                Toggle("I have rights/consent for cloning datasets", isOn: $store.cloneConsentChecked)
-                Toggle("I read dataset guidance", isOn: $store.cloneDatasetGuidanceAccepted)
-            }
-            Text(VoiceCloneGuide.requiredConsent).font(.caption).foregroundStyle(.orange)
-            Text(VoiceCloneGuide.minimumGuidance).font(.caption).foregroundStyle(.secondary)
-            ForEach(store.repository + store.imported) { model in
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack { Text(model.name).font(.headline); Spacer(); Text(model.license.rawValue).foregroundStyle(.secondary) }
-                    Text(model.style).font(.caption)
-                    Text(model.notes).font(.caption2).foregroundStyle(.secondary)
+        @Bindable var runtime = store.runtime
+        return ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                SettingsHeader(title: "Singing Voices", subtitle: "Consent-first RVC voice conversion with a dedicated isolated Python runtime.")
+                GroupBox("RVC Runtime") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack { Image(systemName: runtime.state == .ready ? "checkmark.circle.fill" : "shippingbox"); VStack(alignment:.leading){Text(runtime.status).font(.headline);Text(runtime.detail).font(.caption2).foregroundStyle(.secondary).lineLimit(4)};Spacer();Text(runtime.state.rawValue).font(.caption) }
+                        if runtime.isBusy { ProgressView(value: runtime.progress) }
+                        HStack { Button(runtime.state == .notInstalled ? "Install RVC Runtime" : "Repair Runtime") { Task { await runtime.installOrRepair() } }.disabled(runtime.isBusy); Button("Verify") { Task { await runtime.verify() } }.disabled(runtime.isBusy || runtime.state == .notInstalled); if runtime.isBusy { Button("Cancel",role:.destructive){runtime.cancelActiveOperation()} }; Spacer(); Button("Open Runtime Folder"){runtime.revealRuntimeFolder()};Button("Show Last Log"){runtime.revealLastLog()} }
+                        Text("Private venv, models, cache, and logs: ~/Library/Application Support/LemmingsStudio/RVC").font(.caption).foregroundStyle(.secondary)
+                    }.padding(.vertical,4)
                 }
-                .padding(8).background(Color.secondary.opacity(0.08)).clipShape(RoundedRectangle(cornerRadius: 8))
-            }
-            HStack {
-                Button("Import Model…") {
-                    let panel = NSOpenPanel(); panel.allowsMultipleSelection = false; panel.canChooseDirectories = true; panel.canChooseFiles = true
-                    if panel.runModal() == .OK, let url = panel.url { store.importModel(at: url) }
+                GroupBox("Conversion Quality") {
+                    Form { Picker("Pitch extraction",selection:$runtime.selectedF0Method){ForEach(RVCF0Method.allCases){Text($0.displayName).tag($0)}};Stepper("Transpose: \(runtime.pitchShift) semitones",value:$runtime.pitchShift,in:-24...24);LabeledContent("Index blend"){Slider(value:$runtime.indexRate,in:0...1).frame(width:220);Text("\(Int(runtime.indexRate*100))%").monospacedDigit()};Stepper("Median filter radius: \(runtime.filterRadius)",value:$runtime.filterRadius,in:0...7);LabeledContent("Envelope mix"){Slider(value:$runtime.rmsMixRate,in:0...1).frame(width:220)};LabeledContent("Protect consonants"){Slider(value:$runtime.protect,in:0...0.5).frame(width:220)} }
                 }
-                Spacer(); Text(store.status).foregroundStyle(.secondary)
+                GroupBox("Consent") { VStack(alignment:.leading,spacing:8){Toggle("I have rights/consent for this model and source vocal",isOn:$store.cloneConsentChecked);Toggle("I read the clean-dataset guidance",isOn:$store.cloneDatasetGuidanceAccepted);Text(VoiceCloneGuide.requiredConsent).font(.caption).foregroundStyle(.orange);Text(VoiceCloneGuide.minimumGuidance).font(.caption).foregroundStyle(.secondary)}.padding(.vertical,4) }
+                GroupBox("Voice Models") {
+                    VStack(alignment:.leading,spacing:10){ForEach(store.repository){m in VStack(alignment:.leading){HStack{Text(m.name).font(.headline);Spacer();Text("Catalogue").foregroundStyle(.secondary)};Text(m.notes).font(.caption2).foregroundStyle(.secondary)}.padding(8).background(Color.secondary.opacity(0.08)).clipShape(RoundedRectangle(cornerRadius:8))};ForEach(store.imported){m in VStack(alignment:.leading){HStack{Text(m.name).font(.headline);Spacer();Button("Remove",role:.destructive){store.removeImportedModel(m)}.controlSize(.small)};Text(m.notes).font(.caption2).foregroundStyle(.secondary);if let p=m.installedPath{Text(p).font(.caption2.monospaced()).foregroundStyle(.tertiary).textSelection(.enabled)}}.padding(8).background(Color.secondary.opacity(0.08)).clipShape(RoundedRectangle(cornerRadius:8))};HStack{Button("Import RVC Model…"){let p=NSOpenPanel();p.allowsMultipleSelection=false;p.canChooseDirectories=true;p.canChooseFiles=true;if p.runModal() == .OK, let u = p.url{store.importModel(at:u)}};Spacer();Text(store.status).foregroundStyle(.secondary).lineLimit(3)}}.padding(.vertical,4)
+                }
             }
         }
     }
 
     private var controllersPane: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            SettingsHeader(title: "Controller Presets", subtitle: "Built-in maps for common MIDI keyboards, pad controllers, and macro knobs.")
+        @Bindable var app = app
+        return VStack(alignment: .leading, spacing: 14) {
+            SettingsHeader(title: "Controller Presets", subtitle: "Built-in maps for common MIDI keyboards, pad controllers, macro knobs, and transport.")
+            Form {
+                Picker("Transport profile", selection: $app.midiTransportProfile) {
+                    ForEach(MIDITransportProfile.allCases) { profile in
+                        Text(profile.rawValue).tag(profile)
+                    }
+                }
+                Text(app.midiTransportStatus).font(.caption).foregroundStyle(.secondary)
+            }
             ForEach(MIDIControllerPresetLibrary.presets) { preset in
                 VStack(alignment: .leading, spacing: 4) {
                     HStack { Text(preset.name).font(.headline); Spacer(); Text(preset.maker).foregroundStyle(.secondary) }
@@ -454,7 +549,7 @@ struct LemmingsSettingsView: View {
 }
 
 private enum SettingsTab: String, CaseIterable, Identifiable {
-    case appearance = "Appearance", daw = "DAW", audio = "Audio", midi = "MIDI", mpe = "MPE / Bend", pads = "Drum Pads", mappings = "Mappings", plugins = "Plug-ins", library = "User Library", splice = "Splice", voices = "Voices", controllers = "Controllers"
+    case appearance = "Appearance", daw = "DAW", audio = "Audio", midi = "MIDI", mpe = "MPE / Bend", pads = "Drum Pads", mappings = "Mappings", plugins = "Plug-ins", library = "User Library", splice = "Splice", hostMode = "Host Mode", voices = "Voices", controllers = "Controllers"
     var id: String { rawValue }
     var icon: String {
         switch self {
@@ -468,6 +563,7 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
         case .plugins: return "puzzlepiece.extension"
         case .library: return "folder.badge.gearshape"
         case .splice: return "square.grid.2x2"
+        case .hostMode: return "visionpro"
         case .voices: return "waveform.badge.mic"
         case .controllers: return "dial.medium"
         }

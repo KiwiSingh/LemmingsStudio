@@ -94,7 +94,8 @@ public struct SpliceSample: Identifiable, Hashable, Sendable {
         var next = raw
         next["asset_uuid"] = uuid
         if next["page_url"] == nil, let pageURL { next["page_url"] = pageURL.absoluteString }
-        return SpliceSample(id: uuid, name: name, bpm: bpm, key: key, previewURL: previewURL, pageURL: pageURL, downloadURL: downloadURL, localFileURL: localFileURL, artworkURL: artworkURL, waveformURL: waveformURL, packName: packName, creatorName: creatorName, instrument: instrument, soundType: soundType, durationSeconds: durationSeconds, tags: tags, raw: next)
+        next["drag_source_id"] = next["drag_source_id"] ?? id
+        return SpliceSample(id: id, name: name, bpm: bpm, key: key, previewURL: previewURL, pageURL: pageURL, downloadURL: downloadURL, localFileURL: localFileURL, artworkURL: artworkURL, waveformURL: waveformURL, packName: packName, creatorName: creatorName, instrument: instrument, soundType: soundType, durationSeconds: durationSeconds, tags: tags, raw: next)
     }
 
     /// Returns a copy with a discovered preview-audio URL attached (used when the
@@ -375,20 +376,47 @@ public final class SpliceClient: SpliceProviding, @unchecked Sendable {
     }
 
     public func search(query: String, limit: Int = 12) async throws -> [SpliceSample] {
-        try await search(query: query, limit: limit, type: nil, bpmMin: nil, bpmMax: nil)
+        try await search(
+            query: query,
+            limit: limit,
+            type: nil,
+            bpmMin: nil,
+            bpmMax: nil,
+            musicalKey: nil,
+            page: 1
+        )
     }
 
     /// `type` should be "loop" or "oneshot" (Splice's `describe_a_sound` enum); nil = no filter.
-    public func search(query: String, limit: Int = 12, type: String?, bpmMin: Int?, bpmMax: Int?) async throws -> [SpliceSample] {
+    public func search(
+        query: String,
+        limit: Int = 12,
+        type: String?,
+        bpmMin: Int?,
+        bpmMax: Int?,
+        musicalKey: String? = nil,
+        page: Int = 1
+    ) async throws -> [SpliceSample] {
         let tools = try await tools()
         guard let tool = Self.bestSearchTool(in: tools) else {
             throw SpliceError.noSearchTool(tools.map(\.name))
         }
-        let args = Self.arguments(for: tool, query: query, sample: nil, directory: nil, limit: limit, type: type, bpmMin: bpmMin, bpmMax: bpmMax)
+        let args = Self.arguments(
+            for: tool,
+            query: query,
+            sample: nil,
+            directory: nil,
+            limit: limit,
+            type: type,
+            bpmMin: bpmMin,
+            bpmMax: bpmMax,
+            musicalKey: musicalKey,
+            page: max(1, page)
+        )
         let result = try await mcp.callTool(name: tool.name, arguments: args)
         let samples = Self.samples(fromToolResult: result)
         if samples.isEmpty {
-            throw SpliceError.badResponse("Splice returned no parseable samples for ‘\(query)’. Raw response: \(Self.shortText(from: result))")
+            throw SpliceError.badResponse("Splice returned no parseable samples for ‘\(query)’ on page \(max(1, page)). Raw response: \(Self.shortText(from: result))")
         }
         return samples
     }
@@ -566,10 +594,32 @@ extension SpliceClient {
     }
 
     private static func arguments(for tool: MCPTool, query: String?, sample: SpliceSample?, directory: URL?, limit: Int?) -> [String: Any] {
-        arguments(for: tool, query: query, sample: sample, directory: directory, limit: limit, type: nil, bpmMin: nil, bpmMax: nil)
+        arguments(
+            for: tool,
+            query: query,
+            sample: sample,
+            directory: directory,
+            limit: limit,
+            type: nil,
+            bpmMin: nil,
+            bpmMax: nil,
+            musicalKey: nil,
+            page: 1
+        )
     }
 
-    private static func arguments(for tool: MCPTool, query: String?, sample: SpliceSample?, directory: URL?, limit: Int?, type: String?, bpmMin: Int?, bpmMax: Int?) -> [String: Any] {
+    private static func arguments(
+        for tool: MCPTool,
+        query: String?,
+        sample: SpliceSample?,
+        directory: URL?,
+        limit: Int?,
+        type: String?,
+        bpmMin: Int?,
+        bpmMax: Int?,
+        musicalKey: String?,
+        page: Int
+    ) -> [String: Any] {
         let props = tool.inputSchema["properties"]?.dictionary ?? [:]
         var args: [String: Any] = [:]
         let propertyKeys = Array(props.keys)
@@ -585,8 +635,35 @@ extension SpliceClient {
             args[k] = query
         } else if let query { args["query"] = query }
 
-        if let limit, let k = actual(["limit", "count", "numResults", "num_results", "maxResults", "max_results"]) {
-            args[k] = limit
+        let limitKey = actual(["limit", "count", "numResults", "num_results", "maxResults", "max_results"])
+        let pageKey = actual(["page", "pageNumber", "page_number", "pageIndex", "page_index"])
+        let offsetKey = actual(["offset", "start", "startIndex", "start_index", "skip"])
+
+        if let limit, let limitKey {
+            if page > 1 && pageKey == nil && offsetKey == nil {
+                // The MCP schema has no explicit pagination field. Request the
+                // cumulative result window so later UI pages can still extend
+                // beyond the first two local pages.
+                args[limitKey] = limit * page
+            } else {
+                args[limitKey] = limit
+            }
+        }
+
+        if page > 1 {
+            if let pageKey {
+                args[pageKey] = page
+            } else if let offsetKey, let limit {
+                args[offsetKey] = (page - 1) * limit
+            }
+        }
+
+        if let musicalKey, !musicalKey.isEmpty,
+           let keyField = actual([
+                "key", "musicalKey", "musical_key", "keySignature",
+                "key_signature", "tonality"
+           ]) {
+            args[keyField] = musicalKey
         }
 
         // Loop / one-shot filter. Splice's describe_a_sound exposes `type` with the
@@ -623,7 +700,8 @@ extension SpliceClient {
         var raw = sample.raw
         if let uuid = assetUUID(in: resolved) { raw["asset_uuid"] = uuid }
         if raw["page_url"] == nil, let page = resolved.pageURL { raw["page_url"] = page.absoluteString }
-        return SpliceSample(id: raw["asset_uuid"] ?? sample.id,
+        raw["drag_source_id"] = raw["drag_source_id"] ?? sample.id
+        return SpliceSample(id: sample.id,
                             name: sample.name,
                             bpm: sample.bpm ?? resolved.bpm,
                             key: sample.key ?? resolved.key,

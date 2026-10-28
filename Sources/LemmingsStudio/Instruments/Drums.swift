@@ -46,6 +46,14 @@ public enum DrumGenre: String, CaseIterable, Identifiable, Sendable {
     case dubstep = "Dubstep"
     case rock = "Rock"
     case orchestral = "Orchestral"
+    case afroHouse = "Afro House"
+    case amapiano = "Amapiano"
+    case jerseyClub = "Jersey Club"
+    case ukGarage = "UK Garage"
+    case drumAndBass = "Drum & Bass"
+    case trap = "Trap"
+    case phonk = "Phonk"
+    case baileFunk = "Baile Funk"
     public var id: String { rawValue }
 }
 
@@ -405,7 +413,7 @@ public enum DrumKitLibrary {
             p[.kick] = DrumVoiceParams(tune: 0.9, decay: 1.1, tone: 0.7, drive: 1.1, level: 0.9)
             p[.snare] = DrumVoiceParams(tune: 0.95, decay: 0.9, tone: 0.6, drive: 1.0, level: 0.7)
             p[.closedHat] = DrumVoiceParams(tune: 0.85, decay: 0.9, tone: 0.55, drive: 1.0, level: 0.5)
-        case .techHouse:
+        case .techHouse, .afroHouse:
             p[.kick] = DrumVoiceParams(tune: 1.0, decay: 0.85, tone: 1.0, drive: 1.3, level: 1.0)
             p[.clap] = DrumVoiceParams(tune: 1.0, decay: 1.0, tone: 1.1, drive: 1.0, level: 0.8)
             p[.closedHat] = DrumVoiceParams(tune: 1.1, decay: 0.38, tone: 0.72, drive: 0.9, level: 0.34)
@@ -427,18 +435,18 @@ public enum DrumKitLibrary {
             p[.rim] = DrumVoiceParams(tune: 1.45, decay: 0.34, tone: 1.75, drive: 1.18, level: 0.84)
             p[.closedHat] = DrumVoiceParams(tune: 1.32, decay: 0.38, tone: 1.1, drive: 1.0, level: 0.46)
             p[.openHat] = DrumVoiceParams(tune: 1.2, decay: 0.32, tone: 1.05, drive: 0.95, level: 0.34)
-        case .reggaeton332, .moombah, .moombahton, .dembow:
+        case .reggaeton332, .moombah, .moombahton, .dembow, .amapiano, .baileFunk:
             p[.kick] = DrumVoiceParams(tune: 0.92, decay: 0.82, tone: 1.15, drive: 1.35, level: 1.08)
             p[.sub808] = DrumVoiceParams(tune: 0.78, decay: 1.15, tone: 0.9, drive: 1.65, level: 0.9)
             p[.snare] = DrumVoiceParams(tune: 1.06, decay: 0.75, tone: 1.22, drive: 1.1, level: 0.82)
             p[.clap] = DrumVoiceParams(tune: 1.02, decay: 0.82, tone: 1.2, drive: 1.0, level: 0.84)
             p[.rim] = DrumVoiceParams(tune: 1.1, decay: 0.5, tone: 1.35, drive: 1.0, level: 0.62)
             p[.closedHat] = DrumVoiceParams(tune: 1.0, decay: 0.72, tone: 1.15, drive: 1.0, level: 0.56)
-        case .breakbeat:
+        case .breakbeat, .ukGarage, .drumAndBass, .jerseyClub:
             p[.kick] = DrumVoiceParams(tune: 1.0, decay: 0.9, tone: 1.1, drive: 1.2, level: 1.0)
             p[.snare] = DrumVoiceParams(tune: 1.0, decay: 1.0, tone: 1.2, drive: 1.3, level: 1.0)
             p[.closedHat] = DrumVoiceParams(tune: 1.0, decay: 0.8, tone: 1.1, drive: 1.0, level: 0.6)
-        case .dubstep:
+        case .dubstep, .trap, .phonk:
             p[.kick] = DrumVoiceParams(tune: 0.85, decay: 0.95, tone: 1.25, drive: 1.7, level: 1.05)
             p[.snare] = DrumVoiceParams(tune: 0.95, decay: 1.05, tone: 1.45, drive: 1.45, level: 1.1)
             p[.sub808] = DrumVoiceParams(tune: 0.62, decay: 1.65, tone: 0.82, drive: 2.1, level: 1.0)
@@ -480,6 +488,22 @@ public enum DrumKitLibrary {
             return [SequencerLayer(name: "Half-Time Kick", source: .builtIn, note: DrumVoiceID.kick.midiNote), SequencerLayer(name: "Riot Snare", source: .builtIn, note: DrumVoiceID.snare.midiNote), SequencerLayer(name: "Wobble Sub", source: .synthesized, note: DrumVoiceID.sub808.midiNote), SequencerLayer(name: "Tension Hat", source: .builtIn, note: DrumVoiceID.closedHat.midiNote), SequencerLayer(name: "Metal Rim", source: .builtIn, note: DrumVoiceID.rim.midiNote)]
         case .rock:
             return [SequencerLayer(name: "Rock Kick", source: .builtIn, note: DrumVoiceID.kick.midiNote), SequencerLayer(name: "Rock Snare", source: .builtIn, note: DrumVoiceID.snare.midiNote), SequencerLayer(name: "Closed Hat", source: .builtIn, note: DrumVoiceID.closedHat.midiNote), SequencerLayer(name: "Rack Tom", source: .builtIn, note: DrumVoiceID.tom.midiNote), SequencerLayer(name: "Crash", source: .builtIn, note: DrumVoiceID.crash.midiNote), SequencerLayer(name: "Ride", source: .builtIn, note: DrumVoiceID.ride.midiNote)]
+        case .afroHouse:
+            return [SequencerLayer(name: "Deep Afro Kick", source: .builtIn, note: DrumVoiceID.kick.midiNote), SequencerLayer(name: "Organic Clap", source: .builtIn, note: DrumVoiceID.clap.midiNote), SequencerLayer(name: "Shaker Hat", source: .builtIn, note: DrumVoiceID.closedHat.midiNote), SequencerLayer(name: "Open Shaker", source: .builtIn, note: DrumVoiceID.openHat.midiNote), SequencerLayer(name: "Tribal Tom", source: .builtIn, note: DrumVoiceID.tom.midiNote), SequencerLayer(name: "Wood Rim", source: .builtIn, note: DrumVoiceID.rim.midiNote)]
+        case .amapiano:
+            return [SequencerLayer(name: "Log Kick", source: .builtIn, note: DrumVoiceID.kick.midiNote), SequencerLayer(name: "Log Drum Sub", source: .synthesized, note: DrumVoiceID.sub808.midiNote), SequencerLayer(name: "Soft Clap", source: .builtIn, note: DrumVoiceID.clap.midiNote), SequencerLayer(name: "Perc Rim", source: .builtIn, note: DrumVoiceID.rim.midiNote), SequencerLayer(name: "Shaker Hat", source: .builtIn, note: DrumVoiceID.closedHat.midiNote)]
+        case .jerseyClub:
+            return [SequencerLayer(name: "Jersey Kick", source: .builtIn, note: DrumVoiceID.kick.midiNote), SequencerLayer(name: "Bed Squeak Rim", source: .builtIn, note: DrumVoiceID.rim.midiNote), SequencerLayer(name: "Club Clap", source: .builtIn, note: DrumVoiceID.clap.midiNote), SequencerLayer(name: "Triplet Hat", source: .builtIn, note: DrumVoiceID.closedHat.midiNote), SequencerLayer(name: "Club 808", source: .synthesized, note: DrumVoiceID.sub808.midiNote)]
+        case .ukGarage:
+            return [SequencerLayer(name: "2-Step Kick", source: .builtIn, note: DrumVoiceID.kick.midiNote), SequencerLayer(name: "Garage Snare", source: .builtIn, note: DrumVoiceID.snare.midiNote), SequencerLayer(name: "Shuffle Hat", source: .builtIn, note: DrumVoiceID.closedHat.midiNote), SequencerLayer(name: "Open Hat", source: .builtIn, note: DrumVoiceID.openHat.midiNote), SequencerLayer(name: "Ghost Rim", source: .builtIn, note: DrumVoiceID.rim.midiNote)]
+        case .drumAndBass:
+            return [SequencerLayer(name: "DnB Kick", source: .builtIn, note: DrumVoiceID.kick.midiNote), SequencerLayer(name: "DnB Snare", source: .builtIn, note: DrumVoiceID.snare.midiNote), SequencerLayer(name: "Roll Hat", source: .builtIn, note: DrumVoiceID.closedHat.midiNote), SequencerLayer(name: "Ride Rush", source: .builtIn, note: DrumVoiceID.ride.midiNote), SequencerLayer(name: "Reese Sub", source: .synthesized, note: DrumVoiceID.sub808.midiNote)]
+        case .trap:
+            return [SequencerLayer(name: "Trap Kick", source: .builtIn, note: DrumVoiceID.kick.midiNote), SequencerLayer(name: "Long 808", source: .synthesized, note: DrumVoiceID.sub808.midiNote), SequencerLayer(name: "Trap Clap", source: .builtIn, note: DrumVoiceID.clap.midiNote), SequencerLayer(name: "Roll Hat", source: .builtIn, note: DrumVoiceID.closedHat.midiNote), SequencerLayer(name: "Open Hat", source: .builtIn, note: DrumVoiceID.openHat.midiNote)]
+        case .phonk:
+            return [SequencerLayer(name: "Distorted Kick", source: .builtIn, note: DrumVoiceID.kick.midiNote), SequencerLayer(name: "Cowbell Rim", source: .builtIn, note: DrumVoiceID.rim.midiNote), SequencerLayer(name: "Memphis Snare", source: .builtIn, note: DrumVoiceID.snare.midiNote), SequencerLayer(name: "Dirty 808", source: .synthesized, note: DrumVoiceID.sub808.midiNote), SequencerLayer(name: "Dust Hat", source: .builtIn, note: DrumVoiceID.closedHat.midiNote)]
+        case .baileFunk:
+            return [SequencerLayer(name: "Tamborzão Kick", source: .builtIn, note: DrumVoiceID.kick.midiNote), SequencerLayer(name: "Funk Snare", source: .builtIn, note: DrumVoiceID.snare.midiNote), SequencerLayer(name: "Dry Clap", source: .builtIn, note: DrumVoiceID.clap.midiNote), SequencerLayer(name: "Agogô Rim", source: .builtIn, note: DrumVoiceID.rim.midiNote), SequencerLayer(name: "Rapid Hat", source: .builtIn, note: DrumVoiceID.closedHat.midiNote)]
         case .orchestral:
             return [SequencerLayer(name: "Gran Cassa", source: .builtIn, note: DrumVoiceID.kick.midiNote), SequencerLayer(name: "Concert Snare", source: .builtIn, note: DrumVoiceID.snare.midiNote), SequencerLayer(name: "Timpani Hit", source: .builtIn, note: DrumVoiceID.tom.midiNote), SequencerLayer(name: "Suspended Cymbal", source: .builtIn, note: DrumVoiceID.crash.midiNote), SequencerLayer(name: "Piatti / Crash", source: .builtIn, note: DrumVoiceID.ride.midiNote)]
         }
@@ -563,6 +587,58 @@ public enum DrumKitLibrary {
             (.closedHat, [1,1,1,1, 1,1,1,1, 1,1,1,1, 1,1,1,1]),
             (.tom,       [0,0,0,0, 0,0,0,0, 0,0,1,0, 0,1,0,0]),
             (.crash,     [1,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0]),
+        ]
+        case .afroHouse: return [
+            (.kick,      [1,0,0,0, 1,0,0,0, 1,0,0,0, 1,0,0,0]),
+            (.clap,      [0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]),
+            (.closedHat, [0,0,1,0, 0,1,1,0, 0,0,1,0, 0,1,1,0]),
+            (.tom,       [0,1,0,0, 0,0,0,1, 0,1,0,0, 0,0,1,0]),
+            (.rim,       [0,0,0,1, 0,0,1,0, 0,0,0,1, 0,1,0,0]),
+        ]
+        case .amapiano: return [
+            (.kick,      [1,0,0,0, 0,0,1,0, 1,0,0,0, 0,1,0,0]),
+            (.sub808,    [1,0,0,1, 0,0,1,0, 0,1,0,0, 1,0,0,1]),
+            (.clap,      [0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]),
+            (.rim,       [0,1,0,0, 0,0,0,1, 0,1,0,0, 0,0,1,0]),
+            (.closedHat, [1,0,1,0, 1,1,0,1, 1,0,1,0, 1,1,0,1]),
+        ]
+        case .jerseyClub: return [
+            (.kick,      [1,0,0,1, 0,0,1,0, 1,0,0,1, 0,1,0,0]),
+            (.clap,      [0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]),
+            (.rim,       [0,1,0,0, 0,0,1,0, 0,1,0,0, 0,0,1,0]),
+            (.closedHat, [1,0,1,1, 1,0,1,0, 1,0,1,1, 1,0,1,0]),
+        ]
+        case .ukGarage: return [
+            (.kick,      [1,0,0,0, 0,0,1,0, 0,0,1,0, 0,0,0,1]),
+            (.snare,     [0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]),
+            (.closedHat, [1,0,1,1, 0,1,1,0, 1,0,1,1, 0,1,1,0]),
+            (.openHat,   [0,0,0,0, 0,0,0,1, 0,0,0,0, 0,0,1,0]),
+        ]
+        case .drumAndBass: return [
+            (.kick,      [1,0,0,0, 0,0,1,0, 0,0,1,0, 0,0,0,0]),
+            (.snare,     [0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]),
+            (.closedHat, [1,1,0,1, 1,1,0,1, 1,1,0,1, 1,1,1,1]),
+            (.ride,      [0,0,1,0, 0,0,1,0, 0,0,1,0, 0,0,1,0]),
+        ]
+        case .trap: return [
+            (.kick,      [1,0,0,0, 0,0,1,0, 0,0,0,1, 0,0,1,0]),
+            (.sub808,    [1,0,0,0, 0,0,1,0, 1,0,0,0, 0,0,1,0]),
+            (.clap,      [0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]),
+            (.closedHat, [1,0,1,0, 1,1,1,0, 1,0,1,1, 1,1,1,1]),
+        ]
+        case .phonk: return [
+            (.kick,      [1,0,0,0, 0,0,1,0, 1,0,0,0, 0,0,1,0]),
+            (.sub808,    [1,0,0,0, 1,0,0,1, 1,0,0,0, 1,0,1,0]),
+            (.snare,     [0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]),
+            (.rim,       [1,0,1,0, 0,1,0,1, 1,0,1,0, 0,1,1,0]),
+            (.closedHat, [1,0,1,1, 1,0,1,0, 1,0,1,1, 1,1,1,0]),
+        ]
+        case .baileFunk: return [
+            (.kick,      [1,0,0,1, 0,0,1,0, 1,0,0,1, 0,0,1,0]),
+            (.snare,     [0,0,0,0, 1,0,0,0, 0,0,0,0, 1,0,0,0]),
+            (.clap,      [0,0,1,0, 0,0,0,1, 0,0,1,0, 0,0,0,1]),
+            (.rim,       [0,1,0,0, 0,1,0,0, 0,1,0,0, 0,1,1,0]),
+            (.closedHat, [1,0,1,0, 1,1,1,0, 1,0,1,0, 1,1,1,0]),
         ]
         case .orchestral: return [
             (.kick,      [1,0,0,0, 0,0,0,0, 1,0,0,0, 0,0,0,0]),

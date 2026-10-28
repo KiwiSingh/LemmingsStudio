@@ -37,11 +37,11 @@ public final class HostedAUInstrument: Instrument, InstrumentTarget, Automatable
     private var midiBlock: AUScheduleMIDIEventBlock?
     public private(set) var ready = false
 
-    public init?(pluginName: String, sampleRate: Double, maxFrames: Int = 4096) {
+    public init?(pluginName: String, sampleRate: Double, maxFrames: Int = 4096, componentDescription: AudioComponentDescription? = nil) {
         self.name = pluginName
         self.sampleRate = sampleRate
         self.abl = AudioBufferList.allocate(maximumBuffers: 2)
-        guard let desc = Self.description(forPluginNamed: pluginName) else { return nil }
+        guard let desc = componentDescription ?? Self.description(forPluginNamed: pluginName) else { return nil }
         do {
             // Use the same hosting model as Logic/GarageBand-style AU hosting:
             // instantiate through AVAudioUnit out-of-process first, then keep that
@@ -71,7 +71,7 @@ public final class HostedAUInstrument: Instrument, InstrumentTarget, Automatable
     }
 
     fileprivate static func instantiateComponentSynchronously(_ desc: AudioComponentDescription, preferOutOfProcess: Bool) -> AVAudioUnit? {
-        let options: AudioComponentInstantiationOptions = preferOutOfProcess ? [.loadOutOfProcess] : []
+        let options: AudioComponentInstantiationOptions = preferOutOfProcess && !AudioUnitCatalog.isLocal(desc) ? [.loadOutOfProcess] : []
         let semaphore = DispatchSemaphore(value: 0)
         final class Box { var unit: AVAudioUnit? = nil }
         let box = Box()
@@ -82,8 +82,17 @@ public final class HostedAUInstrument: Instrument, InstrumentTarget, Automatable
         // AU validation/remote-host spin-up can be slow the first time Serum 2 is
         // opened. Wait long enough to get the sandboxed instance, but fall back to
         // the normal path rather than blocking the app indefinitely.
-        _ = semaphore.wait(timeout: .now() + 8.0)
-        return box.unit
+        let completed: Bool
+        if Thread.isMainThread {
+            let end = Date().addingTimeInterval(8)
+            var signaled = false
+            repeat {
+                if semaphore.wait(timeout: .now()) == .success { signaled = true; break }
+                RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.005))
+            } while Date() < end
+            completed = signaled
+        } else { completed = semaphore.wait(timeout: .now() + 8) == .success }
+        return completed ? box.unit : nil
     }
 
     deinit { free(abl.unsafeMutablePointer) }
@@ -114,6 +123,25 @@ public final class HostedAUInstrument: Instrument, InstrumentTarget, Automatable
     }
 
 
+
+    public func capturedPresetStateBase64() -> String? {
+        let state = au.fullStateForDocument ?? au.fullState
+        guard let state,
+              PropertyListSerialization.propertyList(state, isValidFor: .binary),
+              let data = try? PropertyListSerialization.data(fromPropertyList: state, format: .binary, options: 0)
+        else { return nil }
+        return data.base64EncodedString()
+    }
+
+    public func restorePresetStateBase64(_ encoded: String?) {
+        guard let encoded,
+              let data = Data(base64Encoded: encoded),
+              let state = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: Any]
+        else { return }
+        au.fullState = state
+    }
+
+    public var currentPresetName: String? { au.currentPreset?.name }
 
     public var parameters: [PluginParam] {
         guard let tree = au.parameterTree else { return [] }
@@ -658,6 +686,13 @@ public final class HostedAUInstrument: Instrument, InstrumentTarget, Automatable
 /// values into the live AU through scheduleParameterBlock before the block is
 /// rendered.
 public final class HostedAUAudioEffect: AudioEffect {
+    public var hostedAudioUnit: AUAudioUnit { au }
+    public func capturedPresetStateBase64() -> String? {
+        guard let state=au.fullStateForDocument ?? au.fullState, let data=try? PropertyListSerialization.data(fromPropertyList:state,format:.binary,options:0) else {return nil};return data.base64EncodedString()
+    }
+    public func restorePresetStateBase64(_ value:String?) {
+        guard let value,let data=Data(base64Encoded:value),let state=try? PropertyListSerialization.propertyList(from:data,options:[],format:nil) as? [String:Any] else {return};au.fullState=state
+    }
     public let kind: DeviceKind = .externalAudioEffect
     public var bypassed: Bool = false
     public let name: String
@@ -671,12 +706,12 @@ public final class HostedAUAudioEffect: AudioEffect {
     private var renderBlock: AURenderBlock?
     public private(set) var ready = false
 
-    public init?(pluginName: String, sampleRate: Double, maxFrames: Int = 4096) {
+    public init?(pluginName: String, sampleRate: Double, maxFrames: Int = 4096, componentDescription: AudioComponentDescription? = nil) {
         self.name = pluginName
         self.sampleRate = sampleRate
         self.abl = AudioBufferList.allocate(maximumBuffers: 2)
         self.inputABL = AudioBufferList.allocate(maximumBuffers: 2)
-        guard let desc = Self.description(forPluginNamed: pluginName) else {
+        guard let desc = componentDescription ?? Self.description(forPluginNamed: pluginName) else {
             free(self.abl.unsafeMutablePointer)
             free(self.inputABL.unsafeMutablePointer)
             return nil

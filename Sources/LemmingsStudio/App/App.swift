@@ -168,9 +168,16 @@ struct LemmingsStudioApp: App {
                 .environment(appState)
                 .frame(minWidth: 1100, minHeight: 700)
                 .onAppear {
+                    if ProcessInfo.processInfo.arguments.contains("--validate-hosting") {
+                        appState.runHostingRegression();return
+                    }
                     appState.engine.start()
                     appState.rebuildTempoMap()
-                    DesktopPluginBridgeServer.shared.start()
+                    if HostModeControlCenter.shared.autoStart {
+                        HostModeControlCenter.shared.start()
+                    } else {
+                        HostModeControlCenter.shared.refresh()
+                    }
                     StartupSound.shared.play()
                 }
                 .onOpenURL { url in
@@ -188,6 +195,50 @@ struct LemmingsStudioApp: App {
                     .keyboardShortcut("n", modifiers: .command)
                 Button("Open Project…") { appState.openProject() }
                     .keyboardShortcut("o", modifiers: .command)
+
+                Menu("Open Recent") {
+                    if appState.recentProjects.isEmpty {
+                        Text("No Recent Projects")
+                    } else {
+                        ForEach(appState.recentProjects) { entry in
+                            Menu {
+                                Button("Open") {
+                                    appState.openRecentProject(entry)
+                                }
+                                Button("Show in Finder") {
+                                    appState.showRecentProjectInFinder(entry)
+                                }
+                                .disabled(!entry.exists)
+
+                                Divider()
+
+                                Button("Remove from Recents") {
+                                    appState.removeRecentProject(entry)
+                                }
+                            } label: {
+                                Label {
+                                    Text(entry.displayName)
+                                } icon: {
+                                    Image(
+                                        systemName: entry.exists
+                                            ? "doc.badge.clock"
+                                            : "exclamationmark.triangle"
+                                    )
+                                }
+                            }
+                        }
+
+                        Divider()
+
+                        Button("Remove Missing Items") {
+                            appState.pruneMissingRecentProjects()
+                        }
+                        Button("Clear Menu") {
+                            appState.clearRecentProjects()
+                        }
+                    }
+                }
+
                 Divider()
                 Button("Save Project") { appState.saveProject() }
                     .keyboardShortcut("s", modifiers: .command)
@@ -203,9 +254,16 @@ struct LemmingsStudioApp: App {
                     .keyboardShortcut("e", modifiers: [.command, .shift])
             }
             CommandMenu("Host Mode") {
-                Button("Start Integrated Host Mode") { DesktopPluginBridgeServer.shared.start() }
-                Button("Stop Integrated Host Mode") { DesktopPluginBridgeServer.shared.stop() }
+                Button(HostModeControlCenter.shared.isRunning ? "Stop Integrated Host Mode" : "Start Integrated Host Mode") {
+                    HostModeControlCenter.shared.toggle()
+                }
+                Button("Copy Pairing Code") { HostModeControlCenter.shared.copyPairingCode() }
+                    .disabled(!HostModeControlCenter.shared.isRunning)
+                Button("Regenerate Pairing Code") { HostModeControlCenter.shared.regeneratePairingCode() }
+                    .disabled(!HostModeControlCenter.shared.isRunning)
                 Divider()
+                Button("Disconnect All Vision Pro Devices") { HostModeControlCenter.shared.disconnectAll() }
+                    .disabled(HostModeControlCenter.shared.connectedDeviceNames.isEmpty)
                 Button("Show Host Mode Status & Pairing Code") { DesktopPluginBridgeServer.shared.showHostModeStatus() }
             }
             CommandMenu("Export") {
@@ -314,6 +372,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     name: .lemmingsStudioCycleWorkspaceFromGlobalTab,
                     object: nil,
                     userInfo: ["reverse": shiftTab]
+                )
+                return nil
+            }
+
+            if event.keyCode == 49 && noModifiers {
+                guard Self.shouldRouteMainWindowDAWShortcut(event) else { return event }
+                let window = event.window ?? NSApp.keyWindow ?? NSApp.mainWindow
+                if let responder = window?.firstResponder,
+                   Self.isFocusedTextEntryResponder(responder) {
+                    return event
+                }
+                NotificationCenter.default.post(
+                    name: .lemmingsStudioToggleTransportFromGlobalSpace,
+                    object: nil
                 )
                 return nil
             }
@@ -446,6 +518,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 extension Notification.Name {
     static let lemmingsStudioOpenURL = Notification.Name("LemmingsStudioOpenURL")
     static let lemmingsStudioCycleWorkspaceFromGlobalTab = Notification.Name("LemmingsStudioCycleWorkspaceFromGlobalTab")
+    static let lemmingsStudioToggleTransportFromGlobalSpace = Notification.Name("LemmingsStudioToggleTransportFromGlobalSpace")
     static let lemmingsStudioDeleteSelectionFromGlobalKey = Notification.Name("LemmingsStudioDeleteSelectionFromGlobalKey")
 }
 
@@ -491,6 +564,75 @@ private struct UserLibraryFileCandidate: Sendable {
     var modifiedAt: TimeInterval
 }
 
+public enum GenerativeDiscoLayer: String, CaseIterable, Identifiable, Sendable {
+    case bass = "Bass"
+    case harmony = "Harmony"
+    case accents = "Accents"
+    public var id: String { rawValue }
+}
+
+private struct LemmingsSeededGenerator: RandomNumberGenerator {
+    private var state: UInt64
+
+    init(seed: UInt64) {
+        state = seed == 0 ? 0x9E3779B97F4A7C15 : seed
+    }
+
+    mutating func next() -> UInt64 {
+        state &+= 0x9E3779B97F4A7C15
+        var value = state
+        value = (value ^ (value >> 30)) &* 0xBF58476D1CE4E5B9
+        value = (value ^ (value >> 27)) &* 0x94D049BB133111EB
+        return value ^ (value >> 31)
+    }
+
+    mutating func unit() -> Double {
+        Double(next() >> 11) / Double(1 << 53)
+    }
+
+    mutating func chance(_ probability: Double) -> Bool {
+        unit() < max(0, min(1, probability))
+    }
+
+    mutating func integer(_ range: Range<Int>) -> Int {
+        guard !range.isEmpty else { return range.lowerBound }
+        return range.lowerBound + Int(next() % UInt64(range.count))
+    }
+
+    mutating func element<T>(_ values: [T]) -> T? {
+        guard !values.isEmpty else { return nil }
+        return values[integer(0..<values.count)]
+    }
+
+    mutating func signed(_ amount: Double) -> Double {
+        (unit() * 2 - 1) * amount
+    }
+}
+
+struct RecentProjectEntry: Codable, Identifiable, Hashable {
+    var path: String
+    var lastOpened: Date
+
+    var id: String { path }
+
+    var url: URL {
+        URL(fileURLWithPath: path).standardizedFileURL
+    }
+
+    var displayName: String {
+        let name = url.deletingPathExtension().lastPathComponent
+        return name.isEmpty ? url.lastPathComponent : name
+    }
+
+    var parentFolder: String {
+        url.deletingLastPathComponent().path
+    }
+
+    var exists: Bool {
+        FileManager.default.fileExists(atPath: url.path)
+    }
+}
+
 // MARK: - App state
 
 @Observable final class AppState {
@@ -499,6 +641,9 @@ private struct UserLibraryFileCandidate: Sendable {
     var project = Project()
     var currentProjectURL: URL?
     var projectDocumentStatus = "Unsaved project"
+    var recentProjects: [RecentProjectEntry] = []
+    @ObservationIgnored private let recentProjectsDefaultsKey = "lemmingsStudioRecentProjectsV1"
+    @ObservationIgnored private let recentProjectsLimit = 12
 
     var projectDisplayName: String {
         let trimmed = project.name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -514,6 +659,12 @@ private struct UserLibraryFileCandidate: Sendable {
     var selectedAudioClipID: UUID?
     var selectedAudioClipTrackID: UUID?
     var selectedArrangementClipKeys: Set<String> = []
+
+    var generativeDiscoVariation = 0.62
+    var generativeDiscoChaos = 0.28
+    var generativeDiscoSeedLocked = false
+    var generativeDiscoSeed: UInt64 = UInt64.random(in: 1...UInt64.max)
+    var lastGenerativeDiscoSeed: UInt64?
     var betaInstallStatus = "Ready for beta checks"
     var discordApplicationID = UserDefaults.standard.string(forKey: "discordApplicationID") ?? DiscordPresenceConfig.applicationID
     var discordRPCEnabled = UserDefaults.standard.object(forKey: "discordRPCEnabled") as? Bool ?? true
@@ -555,9 +706,13 @@ private struct UserLibraryFileCandidate: Sendable {
     @ObservationIgnored private var userLibraryPreviewPlayer: AVAudioPlayer? = nil
     @ObservationIgnored private var userLibraryMIDIPreviewTask: Task<Void, Never>? = nil
     var openSampleStatus = "Open sample libraries are optional downloads. Pick a source and Lemmings will download into your User Library/Open Samples folder."
+    var openSampleDownloadProgress: Double? = nil
+    var openSampleDownloadBytes: Int64 = 0
+    var openSampleDownloadTotalBytes: Int64 = 0
+    var openSampleDownloadSourceName: String? = nil
     var audioSignatureStatus = "No sample analysed yet"
     var bootstrapStatus = "Ollama / Homebrew not checked"
-    let voiceModels = VoiceModelStore()
+    @MainActor let voiceModels = VoiceModelStore()
     var selectedVoiceModelID: String? = nil
     var voiceAIInputAudioPath = ""
     var voiceAIOutputFolder = UserDefaults.standard.string(forKey: "voiceAIOutputFolder") ?? ""
@@ -603,6 +758,19 @@ private struct UserLibraryFileCandidate: Sendable {
     // Lightweight app-level undo/redo for common editing moves. This is not a
     // full document-history engine yet, but it covers track deletion, device
     // insert/remove, plug-in drops, and clip-FX insert/remove.
+    @ObservationIgnored private var recoveryTimer: Timer?
+    var recoverySnapshotAvailable = false
+    var recoveryStatus = "Recovery ready"
+
+    private var recoveryDirectoryURL: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("LemmingsStudio", isDirectory: true)
+            .appendingPathComponent("Recovery", isDirectory: true)
+    }
+    private var recoveryProjectURL: URL {
+        recoveryDirectoryURL.appendingPathComponent("LastSession.lemmingsproject")
+    }
+
     @ObservationIgnored private var undoStack: [UndoableEdit] = []
     @ObservationIgnored private var redoStack: [UndoableEdit] = []
     @ObservationIgnored private var focusedUndoContext: UndoContext = .general
@@ -620,6 +788,19 @@ private struct UserLibraryFileCandidate: Sendable {
 
     // Live input + integration
     let midi = MIDIInputManager()
+    var midiSourcesRevision=0
+    var trackMIDIInputs:[String:String]=UserDefaults.standard.dictionary(forKey:"LemmingsStudio.TrackMIDIInputs") as? [String:String] ?? [:]
+    func midiInputID(for track:Track)->String {trackMIDIInputs[track.id.uuidString] ?? "*"}
+    func midiInputLabel(for track:Track)->String {
+        let id=midiInputID(for:track)
+        return id == "*" ? "All MIDI Inputs" : midi.sources.first(where:{$0.id==id})?.name ?? "Missing MIDI input"
+    }
+    func setMIDIInput(_ id:String,for track:Track) {
+        guard !midiOverdubRecording && !recorder.isRecording else {editStatus="Stop recording before changing inputs";return}
+        engine.allNotesOff();liveMIDINoteCounts.removeAll()
+        trackMIDIInputs[track.id.uuidString]=id;UserDefaults.standard.set(trackMIDIInputs,forKey:"LemmingsStudio.TrackMIDIInputs")
+        editStatus="‘\(track.name)’ input: \(midiInputLabel(for:track))"
+    }
     let recorder: AudioRecorder
     let midiMap = MIDIMappingStore()
     var discoveredPlugins: [DiscoveredPlugin] = []
@@ -639,6 +820,13 @@ private struct UserLibraryFileCandidate: Sendable {
     var midiLearnStatus = "MIDI learn idle"
     var midiMonitorEnabled = UserDefaults.standard.object(forKey: "midiMonitorEnabled") as? Bool ?? true
     var midiMonitorEvents: [String] = []
+    var midiTransportProfile: MIDITransportProfile = MIDITransportProfile(rawValue: UserDefaults.standard.string(forKey: "midiTransportProfile") ?? "") ?? .automatic {
+        didSet {
+            midi.transportProfile = midiTransportProfile
+            UserDefaults.standard.set(midiTransportProfile.rawValue, forKey: "midiTransportProfile")
+        }
+    }
+    var midiTransportStatus = "Controller transport ready"
     var pluginScanFoldersText = UserDefaults.standard.string(forKey: "pluginScanFoldersText") ?? PluginScanner.defaultSearchPaths.joined(separator: "\n")
 
     // Expressive MIDI / MPE. Channels are stored zero-based internally, displayed 1-based in UI.
@@ -692,6 +880,9 @@ private struct UserLibraryFileCandidate: Sendable {
     var spliceStatus = "Not connected"
     var spliceTools: [MCPTool] = []
     var spliceResults: [SpliceSample] = []
+    var spliceLoadedPage = 0
+    var spliceHasMoreResults = false
+    var spliceSearchGeneration = UUID()
     var spliceAccountSummary = "Credits: unknown • Downloads: unknown"
     var spliceAccountStatus = "Credits preview has not been checked yet."
     var splicePluginFallbackStatus = "Splice Sounds/Bridge plug-in fallback has not been checked yet."
@@ -775,6 +966,7 @@ private struct UserLibraryFileCandidate: Sendable {
         self.recorder = AudioRecorder(engine: engine)
         self.offline = OfflineRenderer(engine: engine)
 
+        loadRecentProjects()
         seedDemoProject()
         engine.attach(project: project)
         engine.metronomeEnabled = metronomeEnabled
@@ -792,6 +984,9 @@ private struct UserLibraryFileCandidate: Sendable {
         NotificationCenter.default.addObserver(forName: .lemmingsStudioCycleWorkspaceFromGlobalTab, object: nil, queue: .main) { [weak self] note in
             let reverse = (note.userInfo?["reverse"] as? Bool) ?? false
             self?.cycleWorkspace(reverse: reverse)
+        }
+        NotificationCenter.default.addObserver(forName: .lemmingsStudioToggleTransportFromGlobalSpace, object: nil, queue: .main) { [weak self] _ in
+            self?.togglePlay()
         }
         NotificationCenter.default.addObserver(forName: .lemmingsStudioDeleteSelectionFromGlobalKey, object: nil, queue: .main) { [weak self] _ in
             guard let self, self.workspace == .arrangement else { return }
@@ -1221,6 +1416,103 @@ private struct UserLibraryFileCandidate: Sendable {
 
     // MARK: Project documents + clip creation
 
+    private func canonicalProjectURL(_ url: URL) -> URL {
+        url.standardizedFileURL.resolvingSymlinksInPath()
+    }
+
+    private func loadRecentProjects() {
+        guard
+            let data = UserDefaults.standard.data(forKey: recentProjectsDefaultsKey),
+            let decoded = try? JSONDecoder().decode([RecentProjectEntry].self, from: data)
+        else {
+            recentProjects = []
+            return
+        }
+
+        var seen = Set<String>()
+        recentProjects = decoded
+            .sorted { $0.lastOpened > $1.lastOpened }
+            .filter { entry in
+                let canonical = canonicalProjectURL(entry.url).path
+                return seen.insert(canonical).inserted
+            }
+            .prefix(recentProjectsLimit)
+            .map {
+                RecentProjectEntry(
+                    path: canonicalProjectURL($0.url).path,
+                    lastOpened: $0.lastOpened
+                )
+            }
+    }
+
+    private func persistRecentProjects() {
+        let trimmed = Array(
+            recentProjects
+                .sorted { $0.lastOpened > $1.lastOpened }
+                .prefix(recentProjectsLimit)
+        )
+        recentProjects = trimmed
+        guard let data = try? JSONEncoder().encode(trimmed) else { return }
+        UserDefaults.standard.set(data, forKey: recentProjectsDefaultsKey)
+    }
+
+    func rememberRecentProject(_ url: URL) {
+        let canonical = canonicalProjectURL(url)
+        recentProjects.removeAll {
+            canonicalProjectURL($0.url).path == canonical.path
+        }
+        recentProjects.insert(
+            RecentProjectEntry(path: canonical.path, lastOpened: Date()),
+            at: 0
+        )
+        persistRecentProjects()
+    }
+
+    func openRecentProject(_ entry: RecentProjectEntry) {
+        let url = canonicalProjectURL(entry.url)
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            projectDocumentStatus = "⚠️ Recent project is missing: \(entry.displayName)"
+            editStatus = projectDocumentStatus
+            removeRecentProject(entry)
+            return
+        }
+        loadProject(from: url)
+    }
+
+    func showRecentProjectInFinder(_ entry: RecentProjectEntry) {
+        let url = canonicalProjectURL(entry.url)
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            projectDocumentStatus = "⚠️ Recent project is missing: \(entry.displayName)"
+            editStatus = projectDocumentStatus
+            removeRecentProject(entry)
+            return
+        }
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
+    func removeRecentProject(_ entry: RecentProjectEntry) {
+        let canonical = canonicalProjectURL(entry.url).path
+        recentProjects.removeAll {
+            canonicalProjectURL($0.url).path == canonical
+        }
+        persistRecentProjects()
+    }
+
+    func clearRecentProjects() {
+        recentProjects.removeAll()
+        persistRecentProjects()
+        projectDocumentStatus = "Recent Projects cleared"
+        editStatus = projectDocumentStatus
+    }
+
+    func pruneMissingRecentProjects() {
+        let previousCount = recentProjects.count
+        recentProjects.removeAll { !$0.exists }
+        if recentProjects.count != previousCount {
+            persistRecentProjects()
+        }
+    }
+
     func newProject() {
         showProjectSetupSheet = true
         let fresh = Project()
@@ -1241,6 +1533,11 @@ private struct UserLibraryFileCandidate: Sendable {
         rebuildTempoMap()
         engine.rebuild()
         refreshDiscordPresence()
+        try? FileManager.default.createDirectory(at: recoveryDirectoryURL, withIntermediateDirectories: true)
+        recoverySnapshotAvailable = FileManager.default.fileExists(atPath: recoveryProjectURL.path)
+        recoveryTimer = Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.writeRecoverySnapshot() }
+        }
     }
 
     func openProject() {
@@ -1299,15 +1596,37 @@ private struct UserLibraryFileCandidate: Sendable {
         saveProject(to: url)
     }
 
+    private func captureHostedPluginStatesForProjectSave() {
+        for track in project.tracks {
+            for clip in track.audioClips {
+                for index in clip.externalPluginSlots.indices {
+                    if let state=engine.capturedExternalState(for:clip.externalPluginSlots[index]) {clip.externalPluginSlots[index].presetStateBase64=state}
+                }
+            }
+            for index in track.externalPluginSlots.indices {
+                let slot=track.externalPluginSlots[index]
+                if let state=engine.capturedExternalState(for:slot) {track.externalPluginSlots[index].presetStateBase64=state}
+                else if slot.role == .instrument,let unit=engine.liveInstrument(for:track) as? HostedAUInstrument {
+                    track.externalPluginSlots[index].presetStateBase64=unit.capturedPresetStateBase64()
+                    track.externalPluginSlots[index].presetName=unit.currentPresetName
+                }
+            }
+        }
+    }
+
     func saveProject(to url: URL) {
         do {
             commitPendingProjectMetadataEdits()
+            captureHostedPluginStatesForProjectSave()
             syncProjectName(from: url, force: true)
             let data = try ProjectDocument(project: project).encoded()
             try data.write(to: url, options: [.atomic])
-            currentProjectURL = url
+            currentProjectURL = canonicalProjectURL(url)
+            rememberRecentProject(url)
             projectDocumentStatus = "Saved → \(url.lastPathComponent)"
             editStatus = projectDocumentStatus
+            try? FileManager.default.removeItem(at: recoveryProjectURL)
+            recoverySnapshotAvailable = false
             refreshDiscordPresence()
         } catch {
             projectDocumentStatus = "⚠️ Save failed: \(error.localizedDescription)"
@@ -1315,12 +1634,41 @@ private struct UserLibraryFileCandidate: Sendable {
         }
     }
 
+    func writeRecoverySnapshot() {
+        guard !project.tracks.isEmpty else { return }
+        do {
+            try FileManager.default.createDirectory(at: recoveryDirectoryURL, withIntermediateDirectories: true)
+            captureHostedPluginStatesForProjectSave()
+            try ProjectDocument(project: project).encoded().write(to: recoveryProjectURL, options: [.atomic])
+            recoverySnapshotAvailable = true
+            recoveryStatus = "Recovery snapshot updated"
+        } catch {
+            recoveryStatus = "⚠️ Recovery snapshot failed: \(error.localizedDescription)"
+        }
+    }
+
+    func restoreRecoverySnapshot() {
+        guard FileManager.default.fileExists(atPath: recoveryProjectURL.path) else { recoverySnapshotAvailable = false; return }
+        loadProject(from: recoveryProjectURL)
+        currentProjectURL = nil
+        project.name += " (Recovered)"
+        projectDocumentStatus = "Recovered previous session"
+        editStatus = projectDocumentStatus
+    }
+
+    func discardRecoverySnapshot() {
+        try? FileManager.default.removeItem(at: recoveryProjectURL)
+        recoverySnapshotAvailable = false
+        recoveryStatus = "Recovery snapshot discarded"
+    }
+
     func loadProject(from url: URL) {
         do {
             let data = try Data(contentsOf: url)
             let loaded = try ProjectDocument.decode(data).makeProject()
             project = loaded
-            currentProjectURL = url
+            currentProjectURL = canonicalProjectURL(url)
+            rememberRecentProject(url)
             syncProjectName(from: url)
             selectedTrackID = loaded.tracks.first?.id
             selectedClipID = nil
@@ -1378,17 +1726,49 @@ private struct UserLibraryFileCandidate: Sendable {
     // MARK: Live input
 
     func setupMIDI() {
-        midi.onEvent = { [weak self] msg in
-            DispatchQueue.main.async { self?.handleMIDI(msg) }
+        midi.transportProfile = midiTransportProfile
+        midi.onSourcedEvent = { [weak self] msg,source in
+            DispatchQueue.main.async { self?.handleMIDI(msg,sourceID:source) }
         }
+        midi.onSourcesChanged = { [weak self] in self?.midiSourcesRevision += 1 }
         midi.learnControl = { [weak self] control in
             DispatchQueue.main.async { self?.completeMIDILearn(control) }
         }
         midi.onDebugEvent = { [weak self] line in
             DispatchQueue.main.async { self?.recordMIDIMonitorEvent(line) }
         }
+        midi.onTransportCommand = { [weak self] command in
+            DispatchQueue.main.async { self?.handleMIDITransport(command) }
+        }
         midi.start()
         midiSourceNames = midi.sourceNames
+    }
+
+    private func handleMIDITransport(_ command: MIDITransportCommand) {
+        switch command {
+        case .play:
+            if !engine.transport.isPlaying { togglePlay() }
+        case .stop:
+            stopTransport()
+        case .record:
+            toggleRecord()
+        case .rewind:
+            returnToStart()
+        case .fastForward:
+            engine.transport.setBeat(transportBeat + Double(max(1, project.beatsPerBar)))
+        case .loop:
+            if let clipID = selectedClipID,
+               let clip = project.tracks
+                    .lazy
+                    .flatMap({ $0.clips })
+                    .first(where: { $0.id == clipID }) {
+                clip.loopEnabled.toggle()
+            } else if let clip = selectedAudioClip {
+                clip.loopEnabled.toggle()
+            }
+        }
+        midiTransportStatus = "\(midiTransportProfile.rawValue): \(command.rawValue)"
+        editStatus = "MIDI transport · \(command.rawValue)"
     }
 
     func beginMIDILearn(track: Track, nodeID: String, paramID: String, paramName: String) {
@@ -1447,6 +1827,27 @@ private struct UserLibraryFileCandidate: Sendable {
         }
     }
 
+    private func pitchBendAutomationLane(on track: Track, channel: Int) -> AutomationLane {
+        let paramID = AutomationSpecialParam.midiPitchBend(channel: channel)
+        if let lane = track.automationLanes.first(where: {
+            $0.nodeID == "instrument" && $0.paramID == paramID
+        }) { return lane }
+        let lane = AutomationLane(nodeID: "instrument", paramID: paramID)
+        track.automationLanes.append(lane)
+        return lane
+    }
+
+    private func recordPitchBendAutomation(on track: Track, value: Float, channel: Int) {
+        let lane = pitchBendAutomationLane(on: track, channel: channel)
+        let beat = transportBeat
+        let normalized = Double(max(-1, min(1, value)))
+        if let last = lane.points.last,
+           abs(last.beat - beat) < 0.01,
+           abs(last.value - normalized) < (1.0 / 8192.0) { return }
+        lane.addPoint(beat: beat, value: normalized)
+        editStatus = "Recorded pitch bend · ch \(channel + 1)"
+    }
+
     private func automationLane(on track: Track, nodeID: String, paramID: String) -> AutomationLane {
         if let existing = track.automationLanes.first(where: { $0.nodeID == nodeID && $0.paramID == paramID }) { return existing }
         let lane = AutomationLane(nodeID: nodeID, paramID: paramID)
@@ -1454,7 +1855,14 @@ private struct UserLibraryFileCandidate: Sendable {
         return lane
     }
 
-    func handleMIDI(_ msg: MIDIMessage) {
+    func handleMIDI(_ msg:MIDIMessage,sourceID:String?=nil) {
+        let armed=project.tracks.filter{$0.armed && $0.kind != .audio}
+        let targets:[Track] = !armed.isEmpty ? armed : (selectedTrack.map{$0.kind == .audio ? [] : [$0]} ?? [])
+        for (index,track) in targets.filter({sourceID == nil || midiInputID(for:$0)=="*" || midiInputID(for:$0)==sourceID}).enumerated() {
+            handleMIDIOnTrack(msg,track:track,applyMappings:index==0)
+        }
+    }
+    private func handleMIDIOnTrack(_ msg:MIDIMessage,track:Track,applyMappings:Bool) {
         guard midiInputEnabled else { return }
         switch msg {
         case .noteOn(let n, let v, let ch):
@@ -1462,7 +1870,7 @@ private struct UserLibraryFileCandidate: Sendable {
                 learnDrumPad(note: n, voice: drumPadLearnVoice)
                 drumPadLearnMode = false
             }
-            if let t = armedOrSelected, mpeSettings.accepts(channel: ch) {
+            if let t = Optional(track), mpeSettings.accepts(channel: ch) {
                 let note = routedMIDINote(n, for: t)
                 let key = liveMIDIKey(track: t, note: note, channel: ch)
                 liveMIDINoteCounts[key, default: 0] += 1
@@ -1475,7 +1883,7 @@ private struct UserLibraryFileCandidate: Sendable {
                 }
             }
         case .noteOff(let n, let ch):
-            if let t = armedOrSelected, mpeSettings.accepts(channel: ch) {
+            if let t = Optional(track), mpeSettings.accepts(channel: ch) {
                 let note = routedMIDINote(n, for: t)
                 let key = liveMIDIKey(track: t, note: note, channel: ch)
                 let remaining = max(0, (liveMIDINoteCounts[key] ?? 1) - 1)
@@ -1488,28 +1896,32 @@ private struct UserLibraryFileCandidate: Sendable {
                 }
             }
         case .cc(let num, let val, let ch):
-            if num == 74, mpeSettings.mapCC74ToTimbre, let t = armedOrSelected, mpeSettings.accepts(channel: ch) {
+            if num == 74, mpeSettings.mapCC74ToTimbre, let t = Optional(track), mpeSettings.accepts(channel: ch) {
                 engine.sendTimbre(to: t, value: val, channel: ch)
                 mpeStatus = "CC74 timbre ch \(ch + 1): \(Int(val * 127))"
             }
-            for m in midiMap.matches(cc: num, channel: ch) {
+            for m in midiMap.matches(cc:num,channel:ch) where applyMappings {
                 applyMIDIMapping(m, normalizedValue: val, channel: ch)
             }
         case .pitchBend(let value, let ch):
             let mappedNorm = (value + 1.0) * 0.5
-            for m in midiMap.matchesPitchBend(channel: ch) {
+            for m in midiMap.matchesPitchBend(channel:ch) where applyMappings {
                 applyMIDIMapping(m, normalizedValue: mappedNorm, channel: ch)
             }
-            guard let t = armedOrSelected, mpeSettings.accepts(channel: ch), mpeMode != .off else { return }
-            engine.sendPitchBend(to: t, value: value, channel: ch, rangeSemitones: mpePitchBendRange)
-            let cents = Int(value * Float(mpePitchBendRange) * 100)
+            guard let t = Optional(track) else { return }
+            let range = mpeMode == .off ? t.pitchBendRangeSemitones : mpePitchBendRange
+            engine.sendPitchBend(to: t, value: value, channel: ch, rangeSemitones: range)
+            if recorder.isRecording || midiOverdubRecording {
+                recordPitchBendAutomation(on: t, value: value, channel: ch)
+            }
+            let cents = Int(value * Float(range) * 100)
             mpeStatus = "Pitch bend ch \(ch + 1): \(cents) cents"
         case .channelPressure(let value, let ch):
-            guard mpePressureEnabled, let t = armedOrSelected, mpeSettings.accepts(channel: ch) else { return }
+            guard mpePressureEnabled, let t = Optional(track), mpeSettings.accepts(channel: ch) else { return }
             engine.sendPressure(to: t, value: value, channel: ch)
             mpeStatus = "Pressure ch \(ch + 1): \(Int(value * 127))"
         case .polyPressure(let note, let value, let ch):
-            guard mpePressureEnabled, let t = armedOrSelected, mpeSettings.accepts(channel: ch) else { return }
+            guard mpePressureEnabled, let t = Optional(track), mpeSettings.accepts(channel: ch) else { return }
             engine.sendPressure(to: t, value: value, note: note, channel: ch)
             mpeStatus = "Poly pressure ch \(ch + 1) note \(note): \(Int(value * 127))"
         }
@@ -1842,14 +2254,47 @@ private struct UserLibraryFileCandidate: Sendable {
     }
 
     /// Rebuild the transport tempo map from the project's tempo automation.
+    ///
+    /// Audio clip length in Arrangement beats can change whenever project tempo
+    /// changes. Re-warp first, then grow the project to contain every active
+    /// clip before constructing the tempo map with the final project length.
     func rebuildTempoMap() {
+        for track in project.tracks {
+            for clip in track.audioClips {
+                WarpEngine.warp(clip, projectTempo: project.tempo)
+            }
+        }
+
+        let midiEnd = project.tracks
+            .flatMap(\.clips)
+            .filter(\.isActive)
+            .map { $0.startBeat + $0.lengthBeats }
+            .max() ?? 0
+
+        let audioEnd = project.tracks
+            .flatMap(\.audioClips)
+            .filter(\.isActive)
+            .map { $0.startBeat + $0.arrangementLengthBeats(projectTempo: project.tempo) }
+            .max() ?? 0
+
+        let contentEnd = max(midiEnd, audioEnd)
+        let bar = Double(max(1, project.beatsPerBar))
+
+        if contentEnd > project.lengthBeats - bar {
+            project.lengthBars = max(
+                project.lengthBars,
+                Int(ceil((contentEnd + bar) / bar))
+            )
+        }
+
         if project.tempoAutomationEnabled && !project.tempoPoints.isEmpty {
-            engine.transport.tempoMap = TempoMap(points: project.tempoPoints, lengthBeats: project.lengthBeats)
+            engine.transport.tempoMap = TempoMap(
+                points: project.tempoPoints,
+                lengthBeats: project.lengthBeats
+            )
         } else {
             engine.transport.tempoMap = nil
         }
-        // Re-warp all audio clips to the (possibly new) tempo.
-        for t in project.tracks { for c in t.audioClips { WarpEngine.warp(c, projectTempo: project.tempo) } }
     }
 
     func runStemSplit(model: StemModel, backend: StemBackend? = nil) {
@@ -2552,23 +2997,94 @@ private struct UserLibraryFileCandidate: Sendable {
     }
 
     func searchSplice(query: String) async {
-        await searchSplice(query: query, type: nil, bpmMin: nil, bpmMax: nil)
+        await searchSplice(
+            query: query,
+            type: nil,
+            bpmMin: nil,
+            bpmMax: nil,
+            musicalKey: nil,
+            page: 1,
+            append: false
+        )
     }
 
     /// `type` is "loop", "oneshot", or nil for no filter.
-    func searchSplice(query: String, type: String?, bpmMin: Int?, bpmMax: Int?) async {
+    ///
+    /// Page 1 replaces the current result set. Later pages append and deduplicate.
+    /// The MCP client uses native page/offset fields when the selected search tool
+    /// advertises them, otherwise it increases the requested limit and returns the
+    /// newly available cumulative result set.
+    func searchSplice(
+        query: String,
+        type: String?,
+        bpmMin: Int?,
+        bpmMax: Int?,
+        musicalKey: String? = nil,
+        page: Int = 1,
+        append: Bool = false
+    ) async {
+        let safePage = max(1, page)
+        let generation: UUID = await MainActor.run {
+            if !append || safePage == 1 {
+                spliceSearchGeneration = UUID()
+                spliceLoadedPage = 0
+                spliceHasMoreResults = false
+            }
+            spliceStatus = safePage == 1
+                ? "Searching Splice…"
+                : "Loading Splice page \(safePage)…"
+            return spliceSearchGeneration
+        }
+
         do {
-            await MainActor.run { spliceStatus = "Searching Splice…" }
-            let found = try await makeSpliceClient().search(query: query, limit: 12, type: type, bpmMin: bpmMin, bpmMax: bpmMax)
+            let found = try await makeSpliceClient().search(
+                query: query,
+                limit: 12,
+                type: type,
+                bpmMin: bpmMin,
+                bpmMax: bpmMax,
+                musicalKey: musicalKey,
+                page: safePage
+            )
+
             await MainActor.run {
-                spliceResults = found.map { $0.withHiddenAssetUUIDFromPageURL }
+                guard generation == spliceSearchGeneration else { return }
+
+                let normalized = found.map { $0.withHiddenAssetUUIDFromPageURL }
+                if append && safePage > 1 {
+                    var seen = Set(spliceResults.map(Self.spliceResultIdentity))
+                    for sample in normalized {
+                        let identity = Self.spliceResultIdentity(sample)
+                        if seen.insert(identity).inserted {
+                            spliceResults.append(sample)
+                        }
+                    }
+                } else {
+                    spliceResults = normalized
+                }
+
+                spliceLoadedPage = safePage
+                spliceHasMoreResults = found.count >= 12
+
                 let resolved = spliceResults.filter { $0.hiddenAssetUUID != nil }.count
                 let typeNote = type.map { " · \($0 == "oneshot" ? "one-shots" : "loops")" } ?? ""
-                spliceStatus = "Found \(found.count) result\(found.count == 1 ? "" : "s")\(typeNote)" + (resolved > 0 ? " · \(resolved) fetchable" : " · Web preview only")
+                let keyNote = musicalKey.map { " · \($0)" } ?? ""
+                let moreNote = spliceHasMoreResults ? " · more available" : " · end of results"
+                spliceStatus =
+                    "Loaded \(spliceResults.count) result\(spliceResults.count == 1 ? "" : "s")\(typeNote)\(keyNote)"
+                    + (resolved > 0 ? " · \(resolved) fetchable" : " · Web preview only")
+                    + moreNote
             }
         } catch {
             await handleSpliceMCPError(error)
         }
+    }
+
+    private static func spliceResultIdentity(_ sample: SpliceSample) -> String {
+        if let uuid = sample.hiddenAssetUUID, !uuid.isEmpty { return "uuid:" + uuid.lowercased() }
+        if let page = sample.pageURL?.absoluteString, !page.isEmpty { return "page:" + page.lowercased() }
+        if let preview = sample.previewURL?.absoluteString, !preview.isEmpty { return "preview:" + preview.lowercased() }
+        return "row:" + sample.id.lowercased() + ":" + sample.name.lowercased()
     }
 
 
@@ -2622,6 +3138,18 @@ private struct UserLibraryFileCandidate: Sendable {
             : "Showing Splice web preview for ‘\(resolved.name)’ in an isolated browser window · hidden asset resolved for MCP download"
     }
 
+    private func spliceSampleForDragID(_ dragID: String) -> SpliceSample? {
+        spliceResults.first { sample in
+            sample.id == dragID
+                || sample.hiddenAssetUUID == dragID
+                || sample.raw["drag_source_id"] == dragID
+                || sample.raw["id"] == dragID
+                || sample.raw["asset_uuid"] == dragID
+                || sample.raw["asset_id"] == dragID
+                || sample.raw["uuid"] == dragID
+        }
+    }
+
     @discardableResult
     func rememberSpliceHiddenAsset(_ sample: SpliceSample) -> SpliceSample {
         let resolved = sample.withHiddenAssetUUIDFromPageURL
@@ -2645,7 +3173,8 @@ private struct UserLibraryFileCandidate: Sendable {
             var raw = row.raw
             raw["asset_uuid"] = uuid
             raw["page_url"] = url.absoluteString
-            spliceResults[i] = SpliceSample(id: uuid,
+            raw["drag_source_id"] = raw["drag_source_id"] ?? row.id
+            spliceResults[i] = SpliceSample(id: row.id,
                                             name: row.name,
                                             bpm: row.bpm,
                                             key: row.key,
@@ -2687,7 +3216,8 @@ private struct UserLibraryFileCandidate: Sendable {
             var raw = row.raw
             raw["asset_uuid"] = uuid
             if let url { raw["web_preview_url"] = url.absoluteString }
-            spliceResults[i] = SpliceSample(id: uuid,
+            raw["drag_source_id"] = raw["drag_source_id"] ?? row.id
+            spliceResults[i] = SpliceSample(id: row.id,
                                             name: row.name,
                                             bpm: row.bpm,
                                             key: row.key,
@@ -2778,6 +3308,9 @@ private struct UserLibraryFileCandidate: Sendable {
             await MainActor.run { spliceStatus = "Imported → \(file.lastPathComponent)" }
         } catch {
             await handleSpliceMCPError(error)
+            await MainActor.run {
+                editStatus = "⚠️ Splice fetch failed: \(error.localizedDescription)"
+            }
         }
     }
 
@@ -2803,6 +3336,11 @@ private struct UserLibraryFileCandidate: Sendable {
 
     @discardableResult
     func addSampleLayer(_ url: URL, to targetTrack: Track? = nil, step: Int? = nil, preferredNote: Int? = nil) -> Track? {
+        // Decode before changing a lane; invalid drops retain its original sound.
+        do {
+            let decoded=try readImportableAudioAsMono(url)
+            guard !decoded.samples.isEmpty,decoded.samples.allSatisfy({$0.isFinite}) else {throw SpliceError.badResponse("Empty or invalid one-shot")}
+        }catch {editStatus="Could not load one-shot: \(error.localizedDescription)";return nil}
         let target: Track
         if let selected = targetTrack ?? selectedTrack, selected.kind.isStepEditable || selected.kind == .sequencer {
             target = selected
@@ -2811,6 +3349,7 @@ private struct UserLibraryFileCandidate: Sendable {
             guard let created = selectedTrack else { return nil }
             target = created
         }
+        let oldLayers=target.sequencerLayers;let oldSteps=target.stepPattern.steps;let oldLive=target.useStepSequencer
         target.useStepSequencer = true
         let existingNotes = Set(target.sequencerLayers.map(\.note))
         let note = preferredNote ?? (60...96).first { !existingNotes.contains($0) } ?? (target.sequencerLayers.map(\.note).max() ?? 63) + 1
@@ -2820,7 +3359,7 @@ private struct UserLibraryFileCandidate: Sendable {
             target.sequencerLayers[existing].name = layerName
             target.sequencerLayers[existing].source = .splice
             target.sequencerLayers[existing].samplePath = url.path
-            target.sequencerLayers[existing].velocity = 0.95
+            target.sequencerLayers[existing].pluginTargetID = nil
             if target.sequencerLayers[existing].steps.count != target.stepPattern.stepCount {
                 target.sequencerLayers[existing].steps = Array(repeating: false, count: target.stepPattern.stepCount)
             }
@@ -2845,7 +3384,12 @@ private struct UserLibraryFileCandidate: Sendable {
         selectedSequencerLayerID = layerID
         workspace = .step
         detailDeck = .clip
-        refreshStepSequencerClips(on: target, fallbackName: "Generated Groove")
+        let newLayers=target.sequencerLayers;let newSteps=target.stepPattern.steps
+        registerUndo(UndoableEdit(name:"Replace sequencer one-shot",undo:{[weak self,weak target] in
+            guard let self,let target else {return};target.sequencerLayers=oldLayers;target.stepPattern.steps=oldSteps;target.useStepSequencer=oldLive;self.engine.rebuild()
+        },redo:{[weak self,weak target] in
+            guard let self,let target else {return};target.sequencerLayers=newLayers;target.stepPattern.steps=newSteps;target.useStepSequencer=true;self.engine.rebuild()
+        }))
         editStatus = step == nil
             ? "Replaced lane sound with one-shot ‘\(layerName)’ on \(target.name)"
             : "Dropped one-shot ‘\(layerName)’ onto step \((step ?? 0) + 1)"
@@ -2867,9 +3411,16 @@ private struct UserLibraryFileCandidate: Sendable {
             _ = addSampleLayer(URL(fileURLWithPath: text), to: track, step: step, preferredNote: note)
             return true
         }
-        if let spliceID = PluginDragPasteboard.spliceSampleID(from: text), let sample = spliceResults.first(where: { $0.id == spliceID }) {
+        if let spliceID = PluginDragPasteboard.spliceSampleID(from: text) {
+            guard let sample = spliceSampleForDragID(spliceID) else {
+                let message = "Fetch-on-drop failed: the dragged Splice result is stale or no longer exists. Search again and retry."
+                spliceStatus = "⚠️ \(message)"
+                editStatus = "⚠️ \(message)"
+                return true
+            }
             let resolved = rememberSpliceHiddenAsset(sample)
             spliceStatus = "Fetch-on-drop: asking official Splice MCP to license/download ‘\(resolved.name)’…"
+            editStatus = "Fetching ‘\(resolved.name)’ from Splice…"
             Task { await downloadSpliceAsSequencerLayer(resolved, to: track, step: step, preferredNote: note) }
             return true
         }
@@ -2883,7 +3434,7 @@ private struct UserLibraryFileCandidate: Sendable {
             spliceStatus = "Fetch-on-drop: resolving/licensing ‘\(resolved.name)’ for sequencer via official MCP…"
             let dir = URL(fileURLWithPath: spliceDownloadDirectory, isDirectory: true)
             let file = try await makeSpliceClient().download(resolved, to: dir)
-            _ = addSampleLayer(file, to: track, step: step, preferredNote: preferredNote)
+            guard addSampleLayer(file, to: track, step: step, preferredNote: preferredNote) != nil else {spliceStatus=editStatus;return}
             spliceStatus = "Loaded one-shot → \(sample.name)"
         } catch {
             spliceStatus = "⚠️ \(error.localizedDescription)"
@@ -2945,8 +3496,29 @@ private struct UserLibraryFileCandidate: Sendable {
             project.tracks.append(target)
             selectedTrackID = target.id
         }
-        let naturalStart = target.audioClips.map { $0.startBeat + (Double($0.samples.count) / $0.sampleRate) * project.tempo / 60.0 }.max() ?? engine.currentBeat
-        let startBeat = max(0, snapArrangementBeat(naturalStart))
+        // Full-song imports can be much longer than the project's initial
+        // Arrangement range. Work in arrangement beats (including warp/trim/
+        // explicit clip length) rather than deriving an end position from the
+        // raw sample buffer.
+        let lastClipEnd = target.audioClips
+            .filter(\.isActive)
+            .map { $0.startBeat + $0.arrangementLengthBeats(projectTempo: project.tempo) }
+            .max()
+
+        // A newly-created/forced track should begin at bar one. For an empty
+        // existing track, retain playhead placement but clamp it to the current
+        // valid project range so a stale transport position cannot put the
+        // imported song beyond the visible timeline.
+        let unclampedStart: Double
+        if lastClipEnd != nil {
+            unclampedStart = lastClipEnd!
+        } else if forceNewTrack {
+            unclampedStart = 0
+        } else {
+            unclampedStart = min(max(0, engine.currentBeat), project.lengthBeats)
+        }
+
+        let startBeat = max(0, snapArrangementBeat(unclampedStart))
         let clip = AudioClip(startBeat: startBeat, samples: mono, sampleRate: sampleRate)
         clip.displayName = name ?? url.deletingPathExtension().lastPathComponent
         clip.sourceURL = url.path
@@ -2960,6 +3532,15 @@ private struct UserLibraryFileCandidate: Sendable {
         }
         target.name = (target.name == "Splice" || target.name == "Audio") ? clip.displayName : target.name
         target.audioClips.append(clip)
+
+        // The Arrangement view is sized from project.lengthBeats. Without
+        // extending the project here, long Finder imports render and play past
+        // the backing timeline, which makes the clip appear completely out of
+        // range. Use the final post-warp length because warping may change the
+        // active sample count.
+        let importedEndBeat = clip.startBeat + clip.arrangementLengthBeats(projectTempo: project.tempo)
+        ensureArrangementLength(coversBeat: importedEndBeat)
+
         selectedTrackID = target.id
         selectedClipID = nil
         selectedAudioClipID = clip.id
@@ -3324,19 +3905,7 @@ private struct UserLibraryFileCandidate: Sendable {
         return hay.contains("splice") && (hay.contains("sounds") || hay.contains("bridge") || hay.contains("listener"))
     }
 
-    private func bestHostablePlugin(for plugin: DiscoveredPlugin) -> DiscoveredPlugin {
-        // Splice's AU has been crash-prone in the field. When the user explicitly
-        // selects a VST/VST3 Splice build, do NOT silently substitute the AU just
-        // because it has the same marketing name. Keep the bridge boundary intact.
-        if isSpliceDesktopPlugin(plugin), plugin.format != .audioUnit { return plugin }
-        if plugin.format == .audioUnit { return plugin }
-        if let au = discoveredPlugins.first(where: { other in
-            other.format == .audioUnit
-            && other.role == plugin.role
-            && other.name.localizedCaseInsensitiveCompare(plugin.name) == .orderedSame
-        }) { return au }
-        return plugin
-    }
+    private func bestHostablePlugin(for plugin: DiscoveredPlugin) -> DiscoveredPlugin { plugin }
 
     @discardableResult
     func dropPlugin(_ plugin: DiscoveredPlugin, on targetTrack: Track?) -> Track {
@@ -3384,9 +3953,14 @@ private struct UserLibraryFileCandidate: Sendable {
                     _ = self.dropPlugin(plugin, on: track)
                 }))
             }
-            assistantLog.append("plugin: added \(plugin.name) to \(track.name) as an external FX slot. Direct AU/VST insert hosting is marked in the rack until the audio bridge is expanded.")
+            engine.refreshDevices(for:track);engine.start()
+            assistantLog.append("plugin: attached \(plugin.name) to \(track.name) as a live insert")
         }
         workspace = .arrangement
+        Task { @MainActor [weak self,weak track] in
+            guard let self,let track,let slot=track.externalPluginSlots.first(where:{$0.pluginID==plugin.id}) else {return}
+            self.openPluginGUI(slot)
+        }
         return track
     }
 
@@ -3410,9 +3984,16 @@ private struct UserLibraryFileCandidate: Sendable {
             _ = addSampleLayer(url, to: targetTrack)
             return true
         }
-        if let spliceID = PluginDragPasteboard.spliceSampleID(from: text), let sample = spliceResults.first(where: { $0.id == spliceID }) {
+        if let spliceID = PluginDragPasteboard.spliceSampleID(from: text) {
+            guard let sample = spliceSampleForDragID(spliceID) else {
+                let message = "Fetch-on-drop failed: the dragged Splice result is stale or no longer exists. Search again and retry."
+                spliceStatus = "⚠️ \(message)"
+                editStatus = "⚠️ \(message)"
+                return true
+            }
             let resolved = rememberSpliceHiddenAsset(sample)
             spliceStatus = "Fetch-on-drop: asking official Splice MCP to license/download ‘\(resolved.name)’ into Arrangement…"
+            editStatus = "Fetching ‘\(resolved.name)’ from Splice…"
             Task { await downloadAndImportSplice(resolved) }
             return true
         }
@@ -3430,6 +4011,8 @@ private struct UserLibraryFileCandidate: Sendable {
                         self?.editStatus = "Added \(plugin.name) to clip FX"
                     }))
                 }
+                engine.rebuild()
+                if let slot=audioClip.externalPluginSlots.last {Task{@MainActor [weak self] in self?.openPluginGUI(slot)}}
                 return true
             }
             let track = dropPlugin(plugin, on: targetTrack)
@@ -3520,8 +4103,7 @@ private struct UserLibraryFileCandidate: Sendable {
 
     @MainActor
     func usePluginSlot(_ slot: ExternalPluginSlot, on track: Track) {
-        track.pluginTargetID = slot.name
-        if slot.role != .effect { track.kind = .analog }
+        if slot.role != .effect { track.pluginTargetID = slot.name;track.kind = .analog }
         selectedTrackID = track.id
         engine.rebuild()
         openPluginGUI(slot)
@@ -3529,28 +4111,35 @@ private struct UserLibraryFileCandidate: Sendable {
 
     @MainActor
     func openPluginGUI(_ slot: ExternalPluginSlot) {
-        // Prefer hosting an Audio Unit whenever one exists for this plug-in — even
-        // if the user picked the VST/VST3 variant. AU hosting is sandboxed
-        // (out-of-process), needs no external Carla install, opens an editor window
-        // owned by Lemmings, and is the path that actually works for Splice Sounds.
-        // Carla is only for plug-ins with no AU at all.
-        if slot.hosted || slot.format == .audioUnit || audioUnitComponent(for: slot) != nil {
-            openHostedAudioUnitEditor(for: slot)
+        if let native=engine.liveNativePlugin(for:slot) {
+            editStatus=native.showEditor() ? "Opened live \(slot.name) VST3 editor" : "Could not create the \(slot.name) editor"
             return
         }
-        CarlaBridgeSupport.openBridge(forPluginName: slot.name, pluginPath: slot.path, format: slot.format) { [weak self] status in
-            self?.carlaBridgeStatus = status
-            self?.editStatus = status
-            self?.pluginScanStatus = status
+        if let unit=engine.liveExternalAU(for:slot) {
+            showHostedAudioUnitEditor(title:slot.name,audioUnit:unit,windowKey:slot.id)
+            editStatus="Opened live \(slot.name) Audio Unit effect editor";return
         }
+        if let unit=liveHostedAudioUnit(for:slot) {
+            showHostedAudioUnitEditor(title:slot.name,audioUnit:unit,windowKey:slot.id)
+            editStatus="Opened live \(slot.name) Audio Unit instrument editor";return
+        }
+        // Old rack rows must be attached to their real processor before opening.
+        if let track=project.tracks.first(where:{$0.externalPluginSlots.contains(where:{$0.id==slot.id})}) {
+            engine.rebuild();engine.start()
+            if let native=engine.liveNativePlugin(for:slot),native.showEditor() {editStatus="Loaded \(slot.name) on ‘\(track.name)’";return}
+            if let unit=engine.liveExternalAU(for:slot) ?? liveHostedAudioUnit(for:slot,on:track) {
+                showHostedAudioUnitEditor(title:slot.name,audioUnit:unit,windowKey:slot.id);editStatus="Opened live \(slot.name) editor";return
+            }
+        }
+        editStatus="Could not load \(slot.name): " + (NativeHostedPlugin.loadErrors[slot.id] ?? "Audio Unit unavailable or initialization failed. Rescan the selected bundle.")
+        pluginScanStatus=editStatus
     }
 
     @MainActor
     private func openHostedAudioUnitEditor(for slot: ExternalPluginSlot) {
         guard let component = audioUnitComponent(for: slot) else {
             if let path = slot.path {
-                NSWorkspace.shared.selectFile(path, inFileViewerRootedAtPath: "")
-                editStatus = "Could not find an installed AU component for \(slot.name); revealed the bundle instead."
+                editStatus = "Could not resolve the Audio Unit at \(path). Rescan the plugin bundle."
             } else {
                 editStatus = "Could not find an installed Audio Unit editor for \(slot.name). Try rescanning plug-ins."
             }
@@ -3701,7 +4290,9 @@ private struct UserLibraryFileCandidate: Sendable {
 
     @MainActor
     private func showHostedAudioUnitEditor(title: String, audioUnit: AUAudioUnit, windowKey: UUID) {
-        let controller = LemmingsPluginEditorWindowController(title: title, audioUnit: audioUnit)
+        let slots=project.tracks.flatMap{$0.externalPluginSlots + $0.audioClips.flatMap(\.externalPluginSlots)}
+        let owner=slots.first(where:{$0.id==windowKey}).flatMap{engine.liveAUOwner(for:$0)}
+        let controller = LemmingsPluginEditorWindowController(title: title, audioUnit: audioUnit, owner: owner)
         pluginEditorWindows[windowKey] = controller
         controller.show { [weak self] in
             Task { @MainActor in self?.pluginEditorWindows.removeValue(forKey: windowKey) }
@@ -3887,6 +4478,7 @@ private struct UserLibraryFileCandidate: Sendable {
         voiceAIStatus = "Voice renders will go to \(url.lastPathComponent)"
     }
 
+    @MainActor
     func importVoiceModelFromPanel() {
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = false
@@ -3908,6 +4500,7 @@ private struct UserLibraryFileCandidate: Sendable {
         voiceAIStatus = "Training dataset selected: \(url.lastPathComponent). Training/export wiring is scaffolded; use only consented dry vocals."
     }
 
+    @MainActor
     func renderVoiceToVoice() {
         guard !voiceAIInputAudioPath.isEmpty else {
             voiceAIStatus = "Pick an input vocal first."
@@ -3945,25 +4538,86 @@ private struct UserLibraryFileCandidate: Sendable {
     func downloadOpenSampleLibrary(_ source: OpenSampleSource) {
         guard let url = source.url else {
             openSampleStatus = "Bhangra downloader is metadata-only for now: no verified CC0 Bhangra sample repository has been bundled. Use Splice/owned packs or VCSL world percussion."
+            openSampleDownloadProgress = nil
+            openSampleDownloadSourceName = nil
             return
         }
-        let libraryRoot = userLibraryFolder.isEmpty ? (FileManager.default.homeDirectoryForCurrentUser.path + "/Music/Lemmings Studio/User Library") : userLibraryFolder
+
+        let libraryRoot = userLibraryFolder.isEmpty
+            ? (FileManager.default.homeDirectoryForCurrentUser.path
+                + "/Music/Lemmings Studio/User Library")
+            : userLibraryFolder
         let base = URL(fileURLWithPath: libraryRoot, isDirectory: true)
             .appendingPathComponent("Open Samples", isDirectory: true)
-        try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
-        let dest = base.appendingPathComponent(source.rawValue.replacingOccurrences(of: " / ", with: "-").replacingOccurrences(of: " ", with: "_") + ".zip")
-        openSampleStatus = "Downloading \(source.rawValue)…"
+        try? FileManager.default.createDirectory(
+            at: base,
+            withIntermediateDirectories: true
+        )
+
+        let filename = source.rawValue
+            .replacingOccurrences(of: " / ", with: "-")
+            .replacingOccurrences(of: " ", with: "_")
+            + ".zip"
+        let destination = base.appendingPathComponent(filename)
+
+        openSampleDownloadSourceName = source.rawValue
+        openSampleDownloadProgress = 0
+        openSampleDownloadBytes = 0
+        openSampleDownloadTotalBytes = 0
+        openSampleStatus = "Downloading \(source.rawValue)… 0%"
+
         Task { [weak self] in
+            guard let self else { return }
+
             do {
-                let (tmp, _) = try await URLSession.shared.download(from: url)
-                if FileManager.default.fileExists(atPath: dest.path) { try FileManager.default.removeItem(at: dest) }
-                try FileManager.default.moveItem(at: tmp, to: dest)
-                self?.openSampleStatus = "Downloaded \(source.rawValue) → \(dest.lastPathComponent). Unzip/import from your User Library when ready."
-                self?.scanUserLibrary()
+                try await SampleLibraryDownload.download(
+                    from: url,
+                    directlyTo: destination
+                ) { [weak self] written, expected in
+                    Task { @MainActor in
+                        guard let self else { return }
+                        self.openSampleDownloadBytes = written
+                        self.openSampleDownloadTotalBytes = max(0, expected)
+
+                        if expected > 0 {
+                            let progress = min(
+                                1,
+                                max(0, Double(written) / Double(expected))
+                            )
+                            self.openSampleDownloadProgress = progress
+                            self.openSampleStatus =
+                                "Downloading \(source.rawValue)… \(Int(progress * 100))%"
+                        } else {
+                            self.openSampleDownloadProgress = nil
+                            self.openSampleStatus =
+                                "Downloading \(source.rawValue)… \(ByteCountFormatter.string(fromByteCount: written, countStyle: .file))"
+                        }
+                    }
+                }
+
+
+                openSampleDownloadProgress = 1
+                openSampleStatus =
+                    "Downloaded \(source.rawValue) → \(destination.lastPathComponent). Unzip/import from your User Library when ready."
+                scanUserLibrary()
+
+                try? await Task.sleep(nanoseconds: 1_200_000_000)
+                openSampleDownloadProgress = nil
+                openSampleDownloadSourceName = nil
             } catch {
-                self?.openSampleStatus = "⚠️ Download failed for \(source.rawValue): \(error.localizedDescription)"
+                openSampleDownloadProgress = nil
+                openSampleDownloadSourceName = nil
+                openSampleStatus =
+                    "⚠️ Download failed for \(source.rawValue): \(error.localizedDescription)"
             }
         }
+    }
+
+    func ensureBuiltInInstrumentDevice(_ kind: DeviceKind, on track: Track) {
+        guard builtInInstrumentKind(for: kind) != nil else { return }
+        track.devices.removeAll { builtInInstrumentKind(for: $0.kind) != nil }
+        let model = DeviceModel(kind: kind)
+        track.devices.insert(model, at: 0)
     }
 
     private func builtInInstrumentKind(for deviceKind: DeviceKind) -> InstrumentKind? {
@@ -3988,8 +4642,6 @@ private struct UserLibraryFileCandidate: Sendable {
             return nil
         }
     }
-
-    @discardableResult
     private func loadBuiltInInstrumentDevice(_ kind: DeviceKind, on track: Track, recordsUndo: Bool = true) -> Bool {
         guard let instrumentKind = builtInInstrumentKind(for: kind) else { return false }
         let oldKind = track.kind
@@ -4024,13 +4676,6 @@ private struct UserLibraryFileCandidate: Sendable {
         }
         engine.rebuild()
         return true
-    }
-
-    func ensureBuiltInInstrumentDevice(_ kind: DeviceKind, on track: Track) {
-        guard builtInInstrumentKind(for: kind) != nil else { return }
-        track.devices.removeAll { builtInInstrumentKind(for: $0.kind) != nil }
-        let model = DeviceModel(kind: kind)
-        track.devices.insert(model, at: 0)
     }
 
     func ensureVisibleInstrumentDevice(on track: Track) {
@@ -4681,6 +5326,8 @@ private struct UserLibraryFileCandidate: Sendable {
 
     func moveMidiClip(_ clipID: UUID, to target: Track) {
         guard let source = project.tracks.first(where: { $0.clips.contains { $0.id == clipID } }),
+              source.id != target.id,
+              target.kind != .audio,
               let index = source.clips.firstIndex(where: { $0.id == clipID }) else { return }
         let oldKind = target.kind
         let clip = source.clips.remove(at: index)
@@ -4717,6 +5364,8 @@ private struct UserLibraryFileCandidate: Sendable {
 
     func moveAudioClip(_ clipID: UUID, to target: Track) {
         guard let source = project.tracks.first(where: { $0.audioClips.contains { $0.id == clipID } }),
+              source.id != target.id,
+              target.kind == .audio,
               let index = source.audioClips.firstIndex(where: { $0.id == clipID }) else { return }
         let oldKind = target.kind
         let clip = source.audioClips.remove(at: index)
@@ -4842,6 +5491,8 @@ private struct UserLibraryFileCandidate: Sendable {
     }
 
     func toggleTrackArm(_ track: Track, exclusive: Bool? = nil) {
+        guard !midiOverdubRecording && !recorder.isRecording else {editStatus="Stop recording before changing armed tracks";return}
+        engine.allNotesOff();liveMIDINoteCounts.removeAll()
         let exclusive = exclusive ?? !multiArmEnabled
         if exclusive {
             for t in project.tracks where t.id != track.id { t.armed = false }
@@ -5122,28 +5773,182 @@ private struct UserLibraryFileCandidate: Sendable {
         replaceMIDINotes(forClipID: clipID, with: after, undoName: "Fit ‘\(clip.name)’ to \(project.key.displayName)", context: .pianoRoll)
     }
 
-    func generativeDisco(on clip: Clip? = nil) {
-        guard let target = clip ?? (selectedClipID.flatMap { id in project.tracks.flatMap({ $0.clips }).first { $0.id == id } }) else {
+    func randomizeGenerativeDiscoSeed() {
+        generativeDiscoSeed = UInt64.random(in: 1...UInt64.max)
+        editStatus = "Generative Disco seed randomized"
+    }
+
+    func generativeDisco(
+        on clip: Clip? = nil,
+        regenerating layers: Set<GenerativeDiscoLayer> = Set(GenerativeDiscoLayer.allCases)
+    ) {
+        guard let target = clip ?? (selectedClipID.flatMap { id in
+            project.tracks.flatMap({ $0.clips }).first { $0.id == id }
+        }) else {
             editStatus = "Select a MIDI clip for Generative Disco."
             return
         }
-        let root = project.key.root
-        let scale = project.key.scale.notes(root: root, from: 48, to: 84).map(\.number)
-        let bass = scale.first(where: { $0 >= 48 }) ?? 48
-        let chord = [0, 2, 4].compactMap { idx in scale.dropFirst(idx).first }.prefix(3)
-        var notes: [ClipNote] = []
-        let len = max(4, target.lengthBeats)
-        var beat = 0.0
-        while beat < len {
-            notes.append(ClipNote(pitch: bass, start: beat, length: 0.45, velocity: 0.9))
-            notes.append(ClipNote(pitch: bass + 12, start: beat + 0.75, length: 0.18, velocity: 0.55))
-            if Int(beat) % 2 == 1 {
-                for p in chord { notes.append(ClipNote(pitch: p + 12, start: beat, length: 0.25, velocity: 0.72)) }
-            }
-            beat += 1.0
+
+        let seed: UInt64
+        if generativeDiscoSeedLocked {
+            seed = generativeDiscoSeed
+        } else {
+            seed = UInt64.random(in: 1...UInt64.max)
+            generativeDiscoSeed = seed
         }
-        target.notes = notes
-        editStatus = "Generated disco riff in ‘\(target.name)’"
+        lastGenerativeDiscoSeed = seed
+
+        var rng = LemmingsSeededGenerator(seed: seed)
+        let variation = max(0, min(1, generativeDiscoVariation))
+        let chaos = max(0, min(1, generativeDiscoChaos))
+        let clipLength = max(4, target.lengthBeats)
+        let barLength = Double(max(1, project.beatsPerBar))
+        let phraseBars = rng.chance(0.35 + variation * 0.45) ? 4 : 8
+        let phraseLength = barLength * Double(phraseBars)
+
+        let scale = project.key.scale
+            .notes(root: project.key.root, from: 36, to: 96)
+            .map(\.number)
+        let bassPool = scale.filter { (40...59).contains($0) }
+        let harmonyPool = scale.filter { (60...84).contains($0) }
+        let bassRoot = bassPool.first ?? 48
+
+        func classifiedLayer(for note: ClipNote) -> GenerativeDiscoLayer {
+            if note.pitch < 60 { return .bass }
+            if note.pitch >= 79 || note.length < 0.20 { return .accents }
+            return .harmony
+        }
+
+        var generated = target.notes.filter { !layers.contains(classifiedLayer(for: $0)) }
+
+        func clippedNote(pitch: Int, start: Double, length: Double, velocity: Double) -> ClipNote? {
+            let safeStart = max(0, start)
+            guard safeStart < clipLength else { return nil }
+            let safeLength = min(max(0.04, length), clipLength - safeStart)
+            guard safeLength > 0.01 else { return nil }
+            return ClipNote(
+                pitch: pitch,
+                start: safeStart,
+                length: safeLength,
+                velocity: Float(max(0.08, min(1.0, velocity)))
+            )
+        }
+
+        let bassArchetypes: [[Double]] = [
+            [0.0, 0.75, 1.5, 2.0, 2.75, 3.5],
+            [0.0, 0.5, 1.5, 2.0, 3.0, 3.5],
+            [0.0, 0.75, 1.25, 2.0, 2.5, 3.25],
+            [0.0, 1.0, 1.75, 2.5, 3.0, 3.75],
+            [0.0, 0.5, 1.0, 1.75, 2.5, 3.5]
+        ]
+
+        let chordArchetypes: [[Double]] = [
+            [0.5, 1.5, 2.5, 3.5],
+            [0.25, 1.25, 2.25, 3.25],
+            [0.5, 1.75, 2.5, 3.75],
+            [0.75, 1.5, 2.75, 3.5]
+        ]
+
+        var barStart = 0.0
+        var barIndex = 0
+        while barStart < clipLength {
+            let phrasePosition = barStart.truncatingRemainder(dividingBy: phraseLength)
+            let finalBarOfPhrase = phrasePosition >= phraseLength - barLength - 0.001
+            let bassPattern = rng.element(bassArchetypes) ?? bassArchetypes[0]
+            let chordPattern = rng.element(chordArchetypes) ?? chordArchetypes[0]
+            let degreeOffset = rng.chance(0.18 + variation * 0.30)
+                ? (rng.element([0, 2, 3, 4, 5]) ?? 0)
+                : 0
+
+            if layers.contains(.bass) {
+                for (index, localBeat) in bassPattern.enumerated() {
+                    if rng.chance(0.05 + chaos * 0.18), index > 0 { continue }
+
+                    var eventBeat = localBeat
+                    if finalBarOfPhrase && localBeat >= 3.0 && rng.chance(0.45 + variation * 0.40) {
+                        eventBeat += rng.element([-0.25, 0.0, 0.25]) ?? 0
+                    }
+
+                    let scaleIndex = min(max(0, degreeOffset), max(0, bassPool.count - 1))
+                    var pitch = bassPool.indices.contains(scaleIndex) ? bassPool[scaleIndex] : bassRoot
+                    if rng.chance(0.16 + variation * 0.28), !bassPool.isEmpty {
+                        let passing = min(bassPool.count - 1, scaleIndex + (rng.chance(0.5) ? 1 : 2))
+                        if bassPool.indices.contains(passing) { pitch = bassPool[passing] }
+                    }
+                    if rng.chance(0.10 + chaos * 0.24), pitch + 12 < 72 { pitch += 12 }
+
+                    if let note = clippedNote(
+                        pitch: pitch,
+                        start: barStart + eventBeat + rng.signed(0.008 + chaos * 0.018),
+                        length: 0.28 + rng.signed(0.05 + variation * 0.08),
+                        velocity: 0.78 + rng.signed(0.08 + chaos * 0.10)
+                    ) {
+                        generated.append(note)
+                    }
+                }
+            }
+
+            if layers.contains(.harmony) {
+                let chordRootIndex = min(
+                    max(0, degreeOffset + (barIndex.isMultiple(of: 2) ? 0 : 3)),
+                    max(0, harmonyPool.count - 1)
+                )
+                let chordPitches = [chordRootIndex, chordRootIndex + 2, chordRootIndex + 4]
+                    .compactMap { harmonyPool.indices.contains($0) ? harmonyPool[$0] : nil }
+
+                for localBeat in chordPattern {
+                    if rng.chance(0.06 + chaos * 0.16) { continue }
+                    let stabLength = rng.chance(0.22 + variation * 0.45) ? 0.18 : 0.32
+                    let human = rng.signed(0.006 + chaos * 0.014)
+                    for (voice, pitch) in chordPitches.enumerated() {
+                        if let note = clippedNote(
+                            pitch: pitch,
+                            start: barStart + localBeat + human,
+                            length: stabLength + rng.signed(0.035),
+                            velocity: 0.60 + Double(voice) * 0.025 + rng.signed(0.06)
+                        ) {
+                            generated.append(note)
+                        }
+                    }
+                }
+            }
+
+            if layers.contains(.accents) {
+                for localBeat in [0.25, 0.75, 1.75, 2.25, 2.75, 3.75] {
+                    let probability = 0.10 + variation * 0.28 + (finalBarOfPhrase ? 0.18 : 0)
+                    guard rng.chance(probability) else { continue }
+                    let upper = harmonyPool.filter { $0 >= 72 }
+                    guard var pitch = rng.element(upper) else { continue }
+                    if rng.chance(0.25 + chaos * 0.25), pitch + 12 <= 96 { pitch += 12 }
+
+                    if let note = clippedNote(
+                        pitch: pitch,
+                        start: barStart + localBeat + rng.signed(0.012 + chaos * 0.02),
+                        length: rng.chance(0.65) ? 0.10 : 0.16,
+                        velocity: 0.42 + rng.unit() * (0.25 + chaos * 0.18)
+                    ) {
+                        generated.append(note)
+                    }
+                }
+            }
+
+            barStart += barLength
+            barIndex += 1
+        }
+
+        target.notes = generated.sorted {
+            if abs($0.start - $1.start) > 0.000_1 { return $0.start < $1.start }
+            return $0.pitch < $1.pitch
+        }
+
+        let layerText = layers.count == GenerativeDiscoLayer.allCases.count
+            ? "all layers"
+            : layers.map(\.rawValue).sorted().joined(separator: ", ")
+        editStatus =
+            "Generated stochastic disco (\(layerText)) in ‘\(target.name)’"
+            + " · seed \(seed)"
+            + " · variation \(Int(variation * 100))%"
+            + " · chaos \(Int(chaos * 100))%"
         engine.rebuild()
     }
 
@@ -5185,7 +5990,7 @@ private struct UserLibraryFileCandidate: Sendable {
         // Dubstep instrument path and every drum lane becomes bass.
         if genre == .guaracha {
             track.kind = .guaracha2C
-        } else if [.reggaeton332, .moombah, .moombahton, .dembow].contains(genre) {
+        } else if [.reggaeton332, .moombah, .moombahton, .dembow, .amapiano, .baileFunk].contains(genre) {
             track.kind = .bailaton
         } else if genre == .dubstep {
             track.kind = .dubstepWrangler
@@ -5199,7 +6004,7 @@ private struct UserLibraryFileCandidate: Sendable {
         if let track {
             target = track
         } else {
-            addTrack(kind: genre == .guaracha ? .guaracha2C : ([.reggaeton332, .moombah, .moombahton, .dembow].contains(genre) ? .bailaton : (genre == .dubstep ? .dubstepWrangler : .drums)))
+            addTrack(kind: genre == .guaracha ? .guaracha2C : ([.reggaeton332, .moombah, .moombahton, .dembow, .amapiano, .baileFunk].contains(genre) ? .bailaton : (genre == .dubstep ? .dubstepWrangler : .drums)))
             guard let created = selectedTrack else { return }
             target = created
         }
@@ -5614,7 +6419,7 @@ private struct UserLibraryFileCandidate: Sendable {
     }
 
     func quickDrumKitInArrangement(_ genre: DrumGenre = .techHouse) {
-        addTrack(kind: genre == .guaracha ? .guaracha2C : ([.reggaeton332, .moombah, .moombahton, .dembow].contains(genre) ? .bailaton : (genre == .dubstep ? .dubstepWrangler : .drums)))
+        addTrack(kind: genre == .guaracha ? .guaracha2C : ([.reggaeton332, .moombah, .moombahton, .dembow, .amapiano, .baileFunk].contains(genre) ? .bailaton : (genre == .dubstep ? .dubstepWrangler : .drums)))
         guard let track = selectedTrack else { return }
         track.name = "\(genre.rawValue) Kit"
         applyDrumKit(genre, to: track, loadGroove: true)
@@ -5731,6 +6536,12 @@ private struct UserLibraryFileCandidate: Sendable {
         }
     }
 
+    private func ensureAudioClipFitsArrangement(_ clip: AudioClip) {
+        let endBeat = clip.startBeat
+            + clip.arrangementLengthBeats(projectTempo: project.tempo)
+        ensureArrangementLength(coversBeat: endBeat)
+    }
+
     func setWarp(_ clip: AudioClip, enabled: Bool, mode: WarpMode? = nil, originalTempo: Double? = nil) {
         clip.warpEnabled = enabled
         if let mode { clip.warpMode = mode }
@@ -5739,6 +6550,7 @@ private struct UserLibraryFileCandidate: Sendable {
             clip.manualTempoOverride = true
         }
         if enabled { WarpEngine.warp(clip, projectTempo: project.tempo) } else { clip.warpedSamples = nil }
+        ensureAudioClipFitsArrangement(clip)
         let modeText = enabled ? " · \(clip.warpMode.rawValue) · \(Int(clip.originalTempo)) BPM" : ""
         editStatus = enabled ? "Warp enabled for ‘\(clip.displayName)’\(modeText)" : "Warp disabled for ‘\(clip.displayName)’"
         engine.rebuild()
@@ -5750,6 +6562,7 @@ private struct UserLibraryFileCandidate: Sendable {
         clip.manualTempoOverride = true
         if let enableWarp { clip.warpEnabled = enableWarp }
         if clip.warpEnabled { WarpEngine.warp(clip, projectTempo: project.tempo) } else { clip.warpedSamples = nil }
+        ensureAudioClipFitsArrangement(clip)
         editStatus = "Clip tempo for ‘\(clip.displayName)’ set to \(Int(safe)) BPM"
         engine.rebuild()
     }
@@ -5762,6 +6575,7 @@ private struct UserLibraryFileCandidate: Sendable {
         clip.originalTempo = detected
         clip.manualTempoOverride = false
         if clip.warpEnabled { WarpEngine.warp(clip, projectTempo: project.tempo) } else { clip.warpedSamples = nil }
+        ensureAudioClipFitsArrangement(clip)
         editStatus = "Clip tempo reset to detected \(Int(detected)) BPM"
         engine.rebuild()
     }
@@ -6204,9 +7018,75 @@ struct ProjectSetupSheet: View {
                 Slider(value: $project.swingAmount, in: 0...0.75) { Text("Project Swing") }
                 Text("Project swing: \(Int(project.swingAmount * 100))%").font(.caption).foregroundStyle(.secondary)
             }
-            Text(app.projectSetupStatus).font(.caption).foregroundStyle(.secondary)
-            HStack { Spacer(); Button("Use Defaults") { project.sampleRate = 48000; project.bitDepth = .float32; project.channelFormat = .stereo; app.confirmProjectSetup() }; Button("Create Project") { app.confirmProjectSetup() }.keyboardShortcut(.defaultAction) }
-        }.padding(24).frame(width: 540)
+            Text(app.projectSetupStatus)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            if !app.recentProjects.isEmpty {
+                Divider()
+
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("Recent Projects")
+                            .font(.headline)
+                        Spacer()
+                        Button("Clear") {
+                            app.clearRecentProjects()
+                        }
+                        .buttonStyle(.plain)
+                        .font(.caption)
+                    }
+
+                    ForEach(Array(app.recentProjects.prefix(5))) { entry in
+                        HStack(spacing: 10) {
+                            Image(
+                                systemName: entry.exists
+                                    ? "doc.badge.clock"
+                                    : "exclamationmark.triangle"
+                            )
+                            .foregroundStyle(entry.exists ? Color.secondary : Color.orange)
+                            .frame(width: 18)
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(entry.displayName)
+                                    .lineLimit(1)
+                                Text(entry.parentFolder)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+
+                            Spacer()
+
+                            Button("Open") {
+                                app.showProjectSetupSheet = false
+                                app.openRecentProject(entry)
+                            }
+                            .controlSize(.small)
+                            .disabled(!entry.exists)
+                        }
+                    }
+                }
+            }
+
+            HStack {
+                Spacer()
+
+                Button("Use Defaults") {
+                    project.sampleRate = 48000
+                    project.bitDepth = .float32
+                    project.channelFormat = .stereo
+                    app.confirmProjectSetup()
+                }
+
+                Button("Create Project") {
+                    app.confirmProjectSetup()
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(24)
+        .frame(width: 600)
     }
 }
 
@@ -6621,11 +7501,13 @@ final class LemmingsPluginEditorWindowController: NSObject, NSWindowDelegate {
     private var window: NSWindow?
     private let title: String
     private let audioUnit: AUAudioUnit
+    private let processorOwner: AnyObject?
     private var onClose: (() -> Void)?
 
-    init(title: String, audioUnit: AUAudioUnit) {
+    init(title: String, audioUnit: AUAudioUnit, owner: AnyObject? = nil) {
         self.title = title
         self.audioUnit = audioUnit
+        self.processorOwner = owner
     }
 
     func show(onClose: @escaping () -> Void) {
@@ -6677,7 +7559,6 @@ private struct WindowTitleUpdater: NSViewRepresentable {
     func updateNSView(_ view: NSView, context: Context) {
         DispatchQueue.main.async {
             view.window?.title = title
-            NSApp.mainWindow?.title = title
         }
     }
 }

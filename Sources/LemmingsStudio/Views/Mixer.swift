@@ -95,6 +95,7 @@ private struct ChannelStrip: View {
             mixerDeviceStack
 
             // Fader + meter side by side
+            TrackRecordingInput(track:track)
             HStack(alignment: .center, spacing: 6) {
                 VerticalFader(value: $track.volume)
                 ChannelMeter(track: track, audible: audible)
@@ -112,6 +113,7 @@ private struct ChannelStrip: View {
                 StripButton(label: "S", active: track.solo, activeColor: .yellow) {
                     app.toggleSolo(track)
                 }
+                StripButton(label:"R",active:track.armed,activeColor:.red){app.toggleTrackArm(track)}
             }
         }
         .padding(8)

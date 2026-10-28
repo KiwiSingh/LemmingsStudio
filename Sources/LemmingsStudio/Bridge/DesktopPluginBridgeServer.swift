@@ -4,6 +4,17 @@ import AVFoundation
 import AppKit
 import AudioToolbox
 
+struct HostModeStatusSnapshot: Sendable {
+    var isRunning: Bool
+    var pairingCode: String
+    var serviceName: String
+    var connectedDeviceNames: [String]
+    var pairedDeviceNames: [String]
+    var hostedInstanceCount: Int
+    var trustedDeviceNames: [String]
+    var lastError: String?
+}
+
 private enum ProviderKind: String, Codable, Sendable { case nativeAU, nativeVST3, experimentalWine }
 private struct BridgePluginDescriptor: Codable, Identifiable, Sendable, Hashable {
     var id: UUID; var name: String; var vendor: String; var format: String; var platform: String; var kind: String; var provider: ProviderKind
@@ -73,12 +84,62 @@ final class DesktopPluginBridgeServer {
     private var sessions: [ObjectIdentifier: ClientSession] = [:]
     private var pluginMap: [UUID: AVAudioUnitComponent] = [:]
     private var instances: [UUID: HostedInstance] = [:]
-    private let pairingCode = String(format: "%06d", Int.random(in: 0...999_999))
+    private var pairingCode = String(format: "%06d", Int.random(in: 0...999_999))
+    private var listenerReady = false
+    private var lastListenerError: String?
+    private let trustedDevicesDefaultsKey = "lemmingsHostModeTrustedDevicesV1"
+
+    var fullControlEnabled = true
 
     private init() {}
 
-    var isRunning: Bool { listener != nil }
-    var currentPairingCode: String { pairingCode }
+    var isRunning: Bool { queue.sync { listener != nil && listenerReady } }
+    var currentPairingCode: String { queue.sync { pairingCode } }
+
+    private var trustedDeviceNames: Set<String> {
+        get { Set(UserDefaults.standard.stringArray(forKey: trustedDevicesDefaultsKey) ?? []) }
+        set { UserDefaults.standard.set(newValue.sorted(), forKey: trustedDevicesDefaultsKey) }
+    }
+
+    func statusSnapshot() -> HostModeStatusSnapshot {
+        queue.sync {
+            HostModeStatusSnapshot(
+                isRunning: listener != nil && listenerReady,
+                pairingCode: pairingCode,
+                serviceName: "_lemmings-plugin._tcp",
+                connectedDeviceNames: sessions.values.map(\.deviceName).sorted(),
+                pairedDeviceNames: sessions.values.filter(\.paired).map(\.deviceName).sorted(),
+                hostedInstanceCount: instances.count,
+                trustedDeviceNames: trustedDeviceNames.sorted(),
+                lastError: lastListenerError
+            )
+        }
+    }
+
+    func regeneratePairingCode() {
+        queue.async {
+            self.pairingCode = String(format: "%06d", Int.random(in: 0...999_999))
+            for session in self.sessions.values {
+                session.paired = false
+                self.send(.pairingRequired, to: session)
+            }
+        }
+    }
+
+    func disconnectAllClients() {
+        queue.async {
+            for session in self.sessions.values { session.connection.cancel() }
+            self.sessions.removeAll()
+        }
+    }
+
+    func forgetTrustedDevice(named name: String) {
+        var trusted = trustedDeviceNames
+        trusted.remove(name)
+        trustedDeviceNames = trusted
+    }
+
+    func forgetAllTrustedDevices() { trustedDeviceNames = [] }
 
     func start() {
         guard listener == nil else { return }
@@ -89,20 +150,39 @@ final class DesktopPluginBridgeServer {
             listener.stateUpdateHandler = { [weak self] state in
                 guard let self else { return }
                 switch state {
-                case .ready: print("[HostMode] Ready via Bonjour. Pairing code: \(self.pairingCode)")
-                case .failed(let error): print("[HostMode] Listener failed: \(error)")
-                default: break
+                case .ready:
+                    self.queue.async {
+                        self.listenerReady = true
+                        self.lastListenerError = nil
+                    }
+                    print("[HostMode] Ready via Bonjour. Pairing code: \(self.pairingCode)")
+                case .failed(let error):
+                    self.queue.async {
+                        self.listenerReady = false
+                        self.lastListenerError = error.localizedDescription
+                    }
+                    print("[HostMode] Listener failed: \(error)")
+                case .cancelled:
+                    self.queue.async { self.listenerReady = false }
+                default:
+                    break
                 }
             }
             self.listener = listener
             listener.start(queue: queue)
         } catch {
+            queue.async {
+                self.listenerReady = false
+                self.lastListenerError = error.localizedDescription
+            }
             print("[HostMode] Unable to start: \(error)")
         }
     }
 
     func stop() {
-        listener?.cancel(); listener = nil
+        listener?.cancel()
+        listener = nil
+        listenerReady = false
         for session in sessions.values { session.connection.cancel() }
         sessions.removeAll()
         for instance in instances.values { instance.shutdown() }
@@ -156,12 +236,23 @@ final class DesktopPluginBridgeServer {
         case .hello(let version, let deviceName):
             session.deviceName = deviceName
             send(.helloAccepted(protocolVersion: min(version, 2), hostName: Host.current().localizedName ?? "Mac"), to: session)
-            send(.pairingRequired, to: session)
-            showPairingCode(for: deviceName)
+
+            if trustedDeviceNames.contains(deviceName) {
+                session.paired = true
+                send(.pairResult(accepted: true, message: "Trusted Vision Pro reconnected"), to: session)
+            } else {
+                send(.pairingRequired, to: session)
+                showPairingCode(for: deviceName)
+            }
 
         case .pair(let code):
             let accepted = code == pairingCode
             session.paired = accepted
+            if accepted {
+                var trusted = trustedDeviceNames
+                trusted.insert(session.deviceName)
+                trustedDeviceNames = trusted
+            }
             send(.pairResult(accepted: accepted, message: accepted ? "Paired with this Mac" : "Pairing code rejected"), to: session)
 
         case .listPlugins:
@@ -169,7 +260,7 @@ final class DesktopPluginBridgeServer {
             send(.plugins(scanPlugins()), to: session)
 
         case .instantiate(let pluginID, let instanceID):
-            guard requirePairing(session), let component = pluginMap[pluginID] else { send(.error("Unknown Audio Unit"), to: session); return }
+            guard requireFullControl(session), let component = pluginMap[pluginID] else { send(.error("Unknown Audio Unit or Host Mode is read-only"), to: session); return }
             AVAudioUnit.instantiate(with: component.audioComponentDescription, options: []) { [weak self, weak session] unit, error in
                 guard let self, let session else { return }
                 self.queue.async {
@@ -204,15 +295,18 @@ final class DesktopPluginBridgeServer {
             send(.parameters(instanceID: instanceID, values: instance.parameters()), to: session)
 
         case .setParameter(let instanceID, let parameterID, let value):
+            guard requireFullControl(session) else { return }
             instances[instanceID]?.setParameter(id: parameterID, normalized: value)
 
         case .midi(let instanceID, let status, let data1, let data2, let sampleOffset):
+            guard requireFullControl(session) else { return }
             instances[instanceID]?.sendMIDI(status: status, data1: data1, data2: data2, sampleOffset: sampleOffset)
 
         case .requestState(let instanceID):
             send(.state(instanceID: instanceID, base64: instances[instanceID]?.stateBase64()), to: session)
 
         case .restoreState(let instanceID, let base64):
+            guard requireFullControl(session) else { return }
             instances[instanceID]?.restoreState(base64)
 
         case .subscribeAudio(let instanceID, let enabled):
@@ -223,6 +317,7 @@ final class DesktopPluginBridgeServer {
             instance.setEditorStreaming(enabled: enabled, width: width, height: height, fps: fps)
 
         case .editorInput(let instanceID, let input):
+            guard requireFullControl(session) else { return }
             instances[instanceID]?.sendEditorInput(input)
 
         case .requestOfflineRender(let instanceID, _, let lengthBeats, let bpm):
@@ -282,6 +377,15 @@ final class DesktopPluginBridgeServer {
         session.connection.send(content: data, completion: .contentProcessed { error in
             if let error { print("[HostMode] send error: \(error)") }
         })
+    }
+
+    private func requireFullControl(_ session: ClientSession) -> Bool {
+        guard requirePairing(session) else { return false }
+        guard fullControlEnabled else {
+            send(.error("This Mac is currently in Read Only Host Mode"), to: session)
+            return false
+        }
+        return true
     }
 
     private func showPairingCode(for deviceName: String) {

@@ -467,7 +467,9 @@ public enum PluginScanner {
         "~/Library/Audio/Plug-Ins/VST3",
         "/Library/Audio/Plug-Ins/VST",
         "~/Library/Audio/Plug-Ins/VST"
-    ]
+    ] + ((try? FileManager.default.contentsOfDirectory(atPath:"/Volumes")) ?? []).flatMap { volume in
+        ["system","user"].flatMap { scope in ["Components","VST3","VST"].map {"/Volumes/\(volume)/Audio-Plugins/\(scope)/\($0)"} }
+    }
 
     /// Scan Audio Units through the system component manager, then enumerate VST/VST3/AU bundles on disk.
     /// Audio Units can be instantiated by Lemmings. VST/VST3 are indexed for browsing/targeting,
@@ -492,7 +494,7 @@ public enum PluginScanner {
     public static func scanAudioUnits() -> [DiscoveredPlugin] {
         #if canImport(AVFoundation)
         let known = Set(KnownPlugins.synths.map { $0.name.lowercased() })
-        let roles: [(OSType, PluginRole)] = [(kAudioUnitType_MusicDevice, .instrument), (kAudioUnitType_Effect, .effect)]
+        let roles: [(OSType, PluginRole)] = [(kAudioUnitType_MusicDevice, .instrument), (kAudioUnitType_Effect, .effect), (kAudioUnitType_MusicEffect, .effect)]
         return roles.flatMap { componentType, role in
             var desc = AudioComponentDescription()
             desc.componentType = componentType
@@ -515,7 +517,7 @@ public enum PluginScanner {
         if name.caseInsensitiveCompare("VoxGarden") == .orderedSame { return .effect }
         let lower = ([name, path ?? ""].joined(separator: " ")).lowercased()
         let instrumentHints = ["synth", "serum", "vital", "massive", "omnisphere", "kontakt", "instrument", "piano", "keys", "organ", "bass", "drum", "sampler", "rompler", "fm", "wavetable", "uhe", "diva", "pigments", "spire", "sylenth"]
-        let effectHints = ["eq", "compress", "limiter", "reverb", "delay", "echo", "chorus", "flanger", "phaser", "distortion", "saturat", "filter", "gate", "de-esser", "clipper", "shaper", "pan", "widen", "meter", "analyzer", "tuner", "kickstart", "sidechain"]
+        let effectHints = ["eq", "compress", "limiter", "reverb", "delay", "echo", "chorus", "flanger", "phaser", "distortion", "saturat", "filter", "gate", "de-esser", "clipper", "shaper", "pan", "widen", "meter", "analyzer", "tuner", "kickstart", "sidechain", "neutron", "ozone", "pro-q"]
         if instrumentHints.contains(where: { lower.contains($0) }) { return .instrument }
         if effectHints.contains(where: { lower.contains($0) }) { return .effect }
         return .unknown
@@ -533,6 +535,14 @@ public enum PluginScanner {
             for case let url as URL in enumerator {
                 let ext = url.pathExtension.lowercased()
                 guard ["component", "vst3", "vst"].contains(ext) else { continue }
+                if ext == "component", let entries=Bundle(url:url)?.infoDictionary?["AudioComponents"] as? [[String:Any]],!entries.isEmpty {
+                    for entry in entries {
+                        guard let name=entry["name"] as? String,let type=entry["type"] as? String,let sub=entry["subtype"] as? String,let maker=entry["manufacturer"] as? String else {continue}
+                        let role:PluginRole = type == "aumu" || type == "augn" ? .instrument : .effect
+                        out.append(DiscoveredPlugin(id:"AU.component.\(type).\(sub).\(maker)",name:name,manufacturer:maker,isKnownSynth:role == .instrument,format:.audioUnit,role:role,path:url.path))
+                    }
+                    continue
+                }
                 let name = url.deletingPathExtension().lastPathComponent
                 let format: PluginFormat = ext == "component" ? .audioUnit : (ext == "vst3" ? .vst3 : .vst)
                 let lower = name.lowercased()

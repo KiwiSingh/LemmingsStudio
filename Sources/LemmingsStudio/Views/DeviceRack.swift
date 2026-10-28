@@ -79,7 +79,7 @@ private struct ExternalPluginCard: View {
                 if let path = slot.path { Text(path).font(.caption2).foregroundStyle(.secondary).lineLimit(1) }
             }
             Spacer()
-            Button(slot.format == .audioUnit ? "Open" : "Bridge") { app.openPluginGUI(slot) }.controlSize(.small)
+            Button("Open") { app.openPluginGUI(slot) }.controlSize(.small)
             if slot.role != .effect {
                 Button("Use") {
                     app.usePluginSlot(slot, on: track)

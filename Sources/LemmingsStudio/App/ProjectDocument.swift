@@ -311,6 +311,9 @@ struct ClipDoc: Codable {
     var isActive: Bool?
     var loopEnabled: Bool?
     var loopLengthBeats: Double?
+    var sourceTempo: Double?
+    var tempoAutomationEnabled: Bool?
+    var tempoPoints: [TempoPointDoc]?
     init(_ clip: Clip) {
         id = clip.id
         name = clip.name
@@ -320,6 +323,9 @@ struct ClipDoc: Codable {
         isActive = clip.isActive
         loopEnabled = clip.loopEnabled
         loopLengthBeats = clip.loopLengthBeats
+        sourceTempo = clip.sourceTempo
+        tempoAutomationEnabled = clip.tempoAutomationEnabled
+        tempoPoints = clip.tempoPoints.map(TempoPointDoc.init)
     }
     func make(color: Color) -> Clip {
         let c = Clip(name: name, startBeat: startBeat, lengthBeats: lengthBeats, notes: notes.map { $0.make() }, color: color)
@@ -327,6 +333,9 @@ struct ClipDoc: Codable {
         c.isActive = isActive ?? true
         c.loopEnabled = loopEnabled ?? true
         c.loopLengthBeats = loopLengthBeats ?? lengthBeats
+        c.sourceTempo = sourceTempo
+        c.tempoAutomationEnabled = tempoAutomationEnabled ?? false
+        c.tempoPoints = tempoPoints?.map { $0.make() } ?? []
         return c
     }
 }
@@ -351,6 +360,9 @@ struct AudioClipDoc: Codable {
     var warpEnabled: Bool
     var warpMode: String?
     var originalTempo: Double
+    var detectedTempo: Double?
+    var tempoAutomationEnabled: Bool?
+    var tempoPoints: [TempoPointDoc]?
     var manualTempoOverride: Bool?
     var displayName: String?
     var sourceURL: String?
@@ -373,6 +385,9 @@ struct AudioClipDoc: Codable {
         warpEnabled = clip.warpEnabled
         warpMode = clip.warpMode.rawValue
         originalTempo = clip.originalTempo
+        detectedTempo = clip.detectedTempo
+        tempoAutomationEnabled = clip.tempoAutomationEnabled
+        tempoPoints = clip.tempoPoints.map(TempoPointDoc.init)
         manualTempoOverride = clip.manualTempoOverride
         displayName = clip.displayName
         sourceURL = clip.sourceURL
@@ -393,6 +408,9 @@ struct AudioClipDoc: Codable {
         clip.warpEnabled = warpEnabled
         if let warpMode, let mode = WarpMode(rawValue: warpMode) { clip.warpMode = mode }
         clip.originalTempo = originalTempo
+        clip.detectedTempo = detectedTempo
+        clip.tempoAutomationEnabled = tempoAutomationEnabled ?? false
+        clip.tempoPoints = tempoPoints?.map { $0.make() } ?? []
         clip.manualTempoOverride = manualTempoOverride ?? false
         clip.displayName = displayName ?? "Audio Clip"
         clip.sourceURL = sourceURL
@@ -444,6 +462,8 @@ struct ExternalPluginSlotDoc: Codable {
     var role: String
     var path: String?
     var hosted: Bool
+    var presetStateBase64: String?
+    var presetName: String?
     init(_ slot: ExternalPluginSlot) {
         id = slot.id
         pluginID = slot.pluginID
@@ -452,6 +472,8 @@ struct ExternalPluginSlotDoc: Codable {
         role = slot.role.rawValue
         path = slot.path
         hosted = slot.hosted
+        presetStateBase64 = slot.presetStateBase64
+        presetName = slot.presetName
     }
     func make() -> ExternalPluginSlot {
         let plugin = DiscoveredPlugin(
@@ -464,6 +486,8 @@ struct ExternalPluginSlotDoc: Codable {
             path: path
         )
         var slot = ExternalPluginSlot(plugin: plugin, hosted: hosted)
+        slot.presetStateBase64 = presetStateBase64
+        slot.presetName = presetName
         if let id { slot.id = id }
         return slot
     }

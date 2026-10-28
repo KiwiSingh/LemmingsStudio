@@ -90,6 +90,7 @@ final class TrackRenderState {
     var effectModels: [DeviceModel] = []
     var externalEffectSlots: [ExternalPluginSlot] = []
     var externalEffects: [AudioEffect] = []
+    var externalFactory: ((ExternalPluginSlot) -> AudioEffect?)? = nil
     var nodes: [String: Automatable] = [:]
 
     init(track: Track, instrument: Instrument, capacity: Int) {
@@ -115,8 +116,9 @@ final class TrackRenderState {
         effectMono = insertModels.map { $0.mono }
         externalEffectSlots = track.externalPluginSlots.filter { $0.role != .instrument }
         externalEffects = externalEffectSlots.map { slot in
+            if let created = externalFactory?(slot) { return created }
             #if canImport(AVFoundation) && canImport(AudioToolbox)
-            if slot.format == .audioUnit, let hosted = HostedAUAudioEffect(pluginName: slot.name, sampleRate: sampleRate) {
+            if slot.format == .audioUnit, let hosted = HostedAUAudioEffect(pluginName: slot.name, sampleRate: sampleRate, componentDescription: AudioUnitCatalog.description(name:slot.name,path:slot.path,identifier:slot.pluginID)) {
                 return hosted
             }
             #endif
@@ -144,6 +146,15 @@ final class TrackRenderState {
     func applyAutomation(atBeat beat: Double) {
         for lane in track.automationLanes where lane.enabled {
             guard let v = lane.value(atBeat: beat) else { continue }
+            if let channel = AutomationSpecialParam.pitchBendChannel(from: lane.paramID) {
+                let bend = Float(max(-1.0, min(1.0, v)))
+                instrument.pitchBend(
+                    bend,
+                    channel: channel,
+                    rangeSemitones: max(1, track.pitchBendRangeSemitones)
+                )
+                continue
+            }
             if lane.paramID == AutomationSpecialParam.deviceOn {
                 let shouldBeOn = v >= 0.5
                 if let idx = effectModels.firstIndex(where: { $0.nodeID == lane.nodeID }) {
@@ -190,6 +201,12 @@ final class ReturnRenderState {
 
 // MARK: - Audio engine
 
+private final class ClipPluginRenderState {
+    let left:UnsafeMutablePointer<Float>;let right:UnsafeMutablePointer<Float>;let effects:[AudioEffect]
+    init(capacity:Int,effects:[AudioEffect]){self.effects=effects;left = .allocate(capacity:capacity);right = .allocate(capacity:capacity);left.initialize(repeating:0,count:capacity);right.initialize(repeating:0,count:capacity)}
+    deinit{left.deallocate();right.deallocate()}
+}
+
 public final class AudioEngine {
     public let avEngine = AVAudioEngine()
     public let transport = Transport()
@@ -205,6 +222,9 @@ public final class AudioEngine {
     /// Cache hosted AU instruments across graph rebuilds so a Sound Agent patch
     /// written into Serum 2 survives record/count-in/track UI rebuilds.
     #if canImport(AVFoundation) && canImport(AudioToolbox)
+    private var clipPluginStates:[UUID:ClipPluginRenderState]=[:]
+    private var nativePluginCache: [UUID:NativeHostedPlugin] = [:]
+    private var externalAUCache: [UUID:HostedAUAudioEffect] = [:]
     private var hostedAUInstrumentCache: [String: HostedAUInstrument] = [:]
     #endif
     public var metronomeEnabled = true
@@ -246,6 +266,7 @@ public final class AudioEngine {
     }
 
     public func attach(project: Project) {
+        if self.project !== project { nativePluginCache.removeAll(); externalAUCache.removeAll(); hostedAUInstrumentCache.removeAll() }
         self.project = project
         transport.tempo = project.tempo
         transport.beatsPerBar = project.beatsPerBar
@@ -266,12 +287,22 @@ public final class AudioEngine {
         #if canImport(AVFoundation) && canImport(AudioToolbox)
         if !liveStepKitHasBuiltInLanes,
            let target = track.pluginTargetID, target != "Built-in Analog", target != "Vital" {
+            if let slot=track.externalPluginSlots.first(where:{$0.role != .effect && (AudioUnitCatalog.compact($0.name.components(separatedBy:":").last ?? $0.name)==AudioUnitCatalog.compact(target.components(separatedBy:":").last ?? target) || $0.pluginID == target)}),slot.format == .vst3 {
+                if let hosted = nativePlugin(for:slot) { return hosted }
+                return UnavailablePluginInstrument(name:slot.name)
+            }
             let cacheKey = hostedAUCacheKey(trackID: track.id, pluginName: target)
             if let cached = hostedAUInstrumentCache[cacheKey], cached.ready { return cached }
-            if let au = HostedAUInstrument(pluginName: target, sampleRate: sampleRate), au.ready {
+            let slot=track.externalPluginSlots.first(where:{$0.role != .effect && (AudioUnitCatalog.compact($0.name.components(separatedBy:":").last ?? $0.name)==AudioUnitCatalog.compact(target.components(separatedBy:":").last ?? target) || $0.pluginID == target)})
+            let desc=AudioUnitCatalog.description(name:slot?.name ?? target,path:slot?.path,identifier:slot?.pluginID ?? "")
+            if let au = HostedAUInstrument(pluginName: target, sampleRate: sampleRate, componentDescription:desc), au.ready {
+                if let slot = track.externalPluginSlots.first(where: { $0.name == target || $0.pluginID == target }) {
+                    au.restorePresetStateBase64(slot.presetStateBase64)
+                }
                 hostedAUInstrumentCache[cacheKey] = au
                 return au
             }
+            return UnavailablePluginInstrument(name:slot?.name ?? target)
         }
         #endif
         switch track.kind {
@@ -356,6 +387,23 @@ public final class AudioEngine {
     /// Tear down and reconnect a source node per track.
     public func rebuild() {
         guard let project = project else { return }
+        let wasRunning=avEngine.isRunning
+        if wasRunning {avEngine.stop()}
+        // Repair legacy file-only AU labels and effects that older scans marked
+        // as instruments. Keep plugin IDs/state and automation references intact.
+        for track in project.tracks {
+            for index in track.externalPluginSlots.indices {
+                let slot=track.externalPluginSlots[index]
+                var role=slot.role
+                if slot.format == .audioUnit,let path=slot.path,let entries=Bundle(path:path)?.infoDictionary?["AudioComponents"] as? [[String:Any]],let entry=entries.first(where:{AudioUnitCatalog.compact($0["name"] as? String ?? "")==AudioUnitCatalog.compact(slot.name)}) ?? entries.first {
+                    let type=entry["type"] as? String ?? ""
+                    role = type == "aumu" || type == "augn" ? .instrument : .effect
+                } else if slot.format == .vst3,let loaded=nativePlugin(for:slot) {role=loaded.isInstrument ? .instrument:.effect}
+                else if role == .unknown {role=PluginScanner.classifyPluginRole(name:slot.name,path:slot.path)}
+                track.externalPluginSlots[index].role=role
+                if role == .effect,track.pluginTargetID==slot.name || track.pluginTargetID==slot.pluginID {track.pluginTargetID=track.externalPluginSlots.first(where:{$0.id != slot.id && $0.role == .instrument})?.name}
+            }
+        }
         #if canImport(AVFoundation) && canImport(AudioToolbox)
         let validHostedAUKeys = Set(project.tracks.compactMap { track -> String? in
             guard let target = track.pluginTargetID, target != "Built-in Analog", target != "Vital" else { return nil }
@@ -363,9 +411,9 @@ public final class AudioEngine {
         })
         hostedAUInstrumentCache = hostedAUInstrumentCache.filter { validHostedAUKeys.contains($0.key) }
         #endif
-        let wasRunning = avEngine.isRunning
-        if wasRunning { avEngine.stop() }
-
+        let validSlotIDs=Set(project.tracks.flatMap{track in (track.externalPluginSlots + track.audioClips.flatMap(\.externalPluginSlots)).map(\.id)})
+        nativePluginCache=nativePluginCache.filter{validSlotIDs.contains($0.key)}
+        externalAUCache=externalAUCache.filter{validSlotIDs.contains($0.key)}
         for node in sourceNodes.values { avEngine.detach(node) }
         for node in returnSourceNodes.values { avEngine.detach(node) }
         if let metronomeNode { avEngine.detach(metronomeNode) }
@@ -375,9 +423,15 @@ public final class AudioEngine {
         states.removeAll()
         returnStates.removeAll()
 
+        clipPluginStates.removeAll()
         for track in project.tracks {
+            for clip in track.audioClips where !clip.externalPluginSlots.isEmpty {
+                let effects=clip.externalPluginSlots.compactMap{externalPlugin(for:$0)}
+                clipPluginStates[clip.id]=ClipPluginRenderState(capacity:maxFrames,effects:effects)
+            }
             let instrument = makeInstrument(for: track)
             let state = TrackRenderState(track: track, instrument: instrument, capacity: maxFrames)
+            state.externalFactory = { [weak self] slot in self?.externalPlugin(for:slot) }
             state.rebuildEffects(sampleRate: sampleRate)
             states[track.id] = state
 
@@ -433,6 +487,7 @@ public final class AudioEngine {
     }
 
     public func start() {
+        if ProcessInfo.processInfo.arguments.contains("--validate-hosting") {return}
         if !avEngine.isRunning {
             avEngine.prepare()
             try? avEngine.start()
@@ -550,6 +605,7 @@ public final class AudioEngine {
         // ---- Automation at this block's start beat ----
         if !track.automationLanes.isEmpty { state.applyAutomation(atBeat: beatNow) }
 
+        if let native=state.instrument as? NativeHostedPlugin {native.setTransport(bpm:currentTempo(atBeat:beatNow),beat:beatNow,playing:transport.isPlaying)}
         // ---- Source: frozen bounce > recorded audio > instrument ----
         if track.frozen, let bounce = track.bounced {
             renderClip(bounce, into: L, R, frames: n, beat0: beatNow)
@@ -655,6 +711,7 @@ public final class AudioEngine {
             for (slot, fx) in zip(state.externalEffectSlots, state.externalEffects) {
                 applyExternalPluginAutomation(track.automationLanes, to: fx, nodeID: slot.nodeID, atBeat: automationBeat)
                 guard !fx.bypassed else { continue }
+                (fx as? NativeHostedPlugin)?.setTransport(bpm:currentTempo(atBeat:automationBeat),beat:automationBeat,playing:transport.isPlaying)
                 fx.process(L, R, frames: n)
             }
         }
@@ -938,10 +995,11 @@ public final class AudioEngine {
         // If the clip has its own insert FX, render the clip into a temporary
         // stereo block first, process that block, then add it to the track bus.
         // This keeps track FX and clip FX independent from the user's POV.
-        if !clip.devices.isEmpty {
-            let clipL = UnsafeMutablePointer<Float>.allocate(capacity: frames)
-            let clipR = UnsafeMutablePointer<Float>.allocate(capacity: frames)
-            defer { clipL.deallocate(); clipR.deallocate() }
+        let hostedClip=clipPluginStates[clip.id]
+        if !clip.devices.isEmpty || hostedClip != nil {
+            let clipL = hostedClip?.left ?? UnsafeMutablePointer<Float>.allocate(capacity: frames)
+            let clipR = hostedClip?.right ?? UnsafeMutablePointer<Float>.allocate(capacity: frames)
+            defer {if hostedClip == nil {clipL.deallocate();clipR.deallocate()}}
             for i in 0..<frames { clipL[i] = 0; clipR[i] = 0 }
             for i in 0..<frames {
                 let beat = beat0 + (Double(i) / sampleRate) * (blockTempo / 60.0)
@@ -961,6 +1019,10 @@ public final class AudioEngine {
                 let fx = DeviceFactory.make(from: device, sampleRate: sampleRate)
                 syncEffect(fx, from: device, atTempo: blockTempo)
                 fx.process(clipL, clipR, frames: frames)
+            }
+            for fx in hostedClip?.effects ?? [] where !fx.bypassed {
+                (fx as? NativeHostedPlugin)?.setTransport(bpm:blockTempo,beat:beat0,playing:true)
+                fx.process(clipL,clipR,frames:frames)
             }
             for i in 0..<frames { L[i] += clipL[i]; R[i] += clipR[i] }
             return
@@ -1092,6 +1154,37 @@ public final class AudioEngine {
 
     // MARK: Live node access (for UI device racks, automation, MIDI, the agent)
 
+    private func nativePlugin(for slot:ExternalPluginSlot)->NativeHostedPlugin? {
+        if let cached=nativePluginCache[slot.id] {return cached}
+        guard let plugin=NativeHostedPlugin(slot:slot,sampleRate:sampleRate,maxFrames:maxFrames) else {return nil}
+        nativePluginCache[slot.id]=plugin
+        for track in project?.tracks ?? [] {if let i=track.externalPluginSlots.firstIndex(where:{$0.id==slot.id}){track.externalPluginSlots[i].hosted=true}}
+        return plugin
+    }
+    private func externalPlugin(for slot:ExternalPluginSlot)->AudioEffect? {
+        if slot.format == .vst3 {return nativePlugin(for:slot)}
+        if slot.format == .audioUnit {
+            if let cached=externalAUCache[slot.id] {return cached}
+            guard let unit=HostedAUAudioEffect(pluginName:slot.name,sampleRate:sampleRate,componentDescription:AudioUnitCatalog.description(name:slot.name,path:slot.path,identifier:slot.pluginID)) else {return nil}
+            unit.restorePresetStateBase64(slot.presetStateBase64);externalAUCache[slot.id]=unit
+            for track in project?.tracks ?? [] {if let i=track.externalPluginSlots.firstIndex(where:{$0.id==slot.id}){track.externalPluginSlots[i].hosted=true}}
+            return unit
+        }
+        return nil
+    }
+    public func liveNativePlugin(for slot:ExternalPluginSlot)->NativeHostedPlugin? {nativePluginCache[slot.id]}
+    public func liveExternalAU(for slot:ExternalPluginSlot)->AUAudioUnit? {externalAUCache[slot.id]?.hostedAudioUnit}
+    public func liveAUOwner(for slot:ExternalPluginSlot)->AnyObject? {
+        if let effect=externalAUCache[slot.id] {return effect}
+        for track in project?.tracks ?? [] where track.externalPluginSlots.contains(where:{$0.id==slot.id}) {
+            if let instrument=states[track.id]?.instrument as? HostedAUInstrument {return instrument}
+        }
+        return nil
+    }
+    public func capturedExternalState(for slot:ExternalPluginSlot)->String? {
+        if let unit=nativePluginCache[slot.id] {return unit.capturedPresetStateBase64()}
+        return externalAUCache[slot.id]?.capturedPresetStateBase64()
+    }
     public func liveInstrument(for track: Track) -> Instrument? { states[track.id]?.instrument }
     public func liveDrumKit(for track: Track) -> DrumKit? { states[track.id]?.instrument as? DrumKit }
     public func liveEffects(for track: Track) -> [AudioEffect] { states[track.id]?.effects ?? [] }
@@ -1100,8 +1193,11 @@ public final class AudioEngine {
     /// Rebuild only the effect chain for one track (after add/remove/reorder),
     /// without tearing down source nodes.
     public func refreshDevices(for track: Track) {
+        let running=avEngine.isRunning
+        if running {avEngine.stop()}
         states[track.id]?.rebuildEffects(sampleRate: sampleRate)
         for state in returnStates.values { state.rebuildEffects(sampleRate: sampleRate) }
+        if running {start()}
     }
 
     /// Route a live MIDI/UI note to a specific track's instrument.

@@ -3,7 +3,21 @@ import Foundation
 import CoreMIDI
 #endif
 
+public enum MIDITransportCommand: String, Sendable {
+    case play, stop, record, rewind, fastForward, loop
+}
+
+public enum MIDITransportProfile: String, CaseIterable, Identifiable, Sendable {
+    case automatic = "Automatic"
+    case presonusATOM = "PreSonus ATOM"
+    case akaiMPKMiniIV = "AKAI MPK Mini IV"
+    case generic = "Generic MIDI Transport"
+    public var id: String { rawValue }
+}
+
 // MARK: - MIDI messages
+
+public struct MIDIInputSource:Identifiable,Sendable { public var id:String;public var name:String }
 
 public enum MIDIMessage: Sendable {
     case noteOn(note: Int, velocity: Float, channel: Int)
@@ -129,6 +143,9 @@ public struct MIDILearnTarget: Hashable, Sendable {
 
 public final class MIDIInputManager {
     public private(set) var sourceNames: [String] = []
+    public private(set) var sources:[MIDIInputSource]=[]
+    public var onSourcedEvent: ((MIDIMessage,String)->Void)?
+    public var onSourcesChanged:(()->Void)?
     public var onEvent: ((MIDIMessage) -> Void)?
     /// Learns the next useful MIDI control gesture. This includes classic CCs and pitch bend,
     /// because several compact keyboards expose joystick/touch-strip/pitch controls that users
@@ -136,6 +153,8 @@ public final class MIDIInputManager {
     public var learnControl: ((_ control: MIDIControlDescriptor) -> Void)?
     /// Lightweight monitor hook for sanity-checking hardware input payloads.
     public var onDebugEvent: ((_ line: String) -> Void)?
+    public var onTransportCommand: ((_ command: MIDITransportCommand) -> Void)?
+    public var transportProfile: MIDITransportProfile = .automatic
 
     #if canImport(CoreMIDI)
     private var client = MIDIClientRef()
@@ -148,13 +167,13 @@ public final class MIDIInputManager {
     public func start() {
         guard !started else { return }
         var status = MIDIClientCreateWithBlock("LemmingsStudio" as CFString, &client) { [weak self] notif in
-            self?.refreshSources()
+            DispatchQueue.main.async {self?.refreshSources()}
         }
         guard status == noErr else { return }
 
         // Modern UMP input port.
-        status = MIDIInputPortCreateWithProtocol(client, "In" as CFString, ._1_0, &inPort) { [weak self] evtList, _ in
-            self?.handle(evtList)
+        status = MIDIInputPortCreateWithProtocol(client, "In" as CFString, ._1_0, &inPort) { [weak self] evtList, source in
+            self?.handle(evtList,sourceID:String(Int32(truncatingIfNeeded:Int(bitPattern:source))))
         }
         guard status == noErr else { return }
         connectAllSources()
@@ -163,17 +182,23 @@ public final class MIDIInputManager {
 
     private func connectAllSources() {
         let count = MIDIGetNumberOfSources()
-        var names: [String] = []
+        var names: [String] = [];var devices:[MIDIInputSource]=[]
         for i in 0..<count {
             let src = MIDIGetSource(i)
             let uid = Self.uniqueID(of: src)
             if !connectedSourceIDs.contains(uid) {
-                MIDIPortConnectSource(inPort, src, nil)
+                MIDIPortConnectSource(inPort, src, UnsafeMutableRawPointer(bitPattern:Int(uid)))
                 connectedSourceIDs.insert(uid)
             }
-            names.append(Self.displayName(of: src))
+            names.append(Self.displayName(of: src));devices.append(MIDIInputSource(id:String(uid),name:Self.displayName(of:src)))
         }
-        sourceNames = names
+        let live=Set(devices.compactMap{Int32($0.id)})
+        for uid in connectedSourceIDs.subtracting(live) {
+            // The source has gone away. Keep no stale connected IDs so the same
+            // keyboard can reconnect and be wired again on the next notification.
+            connectedSourceIDs.remove(uid)
+        }
+        sourceNames = names;sources=devices;onSourcesChanged?()
     }
     private func refreshSources() { connectAllSources() }
 
@@ -190,7 +215,7 @@ public final class MIDIInputManager {
         return (param?.takeRetainedValue() as String?) ?? "MIDI Source"
     }
 
-    private func handle(_ evtList: UnsafePointer<MIDIEventList>) {
+    private func handle(_ evtList: UnsafePointer<MIDIEventList>,sourceID:String) {
         let list = evtList.pointee
         var packet = list.packet
         for _ in 0..<list.numPackets {
@@ -198,12 +223,43 @@ public final class MIDIInputManager {
                 let ptr = raw.bindMemory(to: UInt32.self)
                 return Array(ptr.prefix(Int(packet.wordCount)))
             }
-            for w in words { decodeUMP(w) }
+            for w in words { decodeUMP(w,sourceID:sourceID) }
             packet = MIDIEventPacketNext(&packet).pointee
         }
     }
 
-    private func decodeUMP(_ word: UInt32) {
+    private func effectiveTransportProfile() -> MIDITransportProfile {
+        guard transportProfile == .automatic else { return transportProfile }
+        let names = sourceNames.joined(separator: " ").lowercased()
+        if names.contains("atom") || names.contains("presonus") { return .presonusATOM }
+        if names.contains("mpk mini iv") || names.contains("mpk mini 4") || names.contains("mpk mini mk4") { return .akaiMPKMiniIV }
+        return .generic
+    }
+
+    private func transportCommandForCC(_ number: Int, value: Int) -> MIDITransportCommand? {
+        guard value >= 64 else { return nil }
+        switch effectiveTransportProfile() {
+        case .presonusATOM:
+            return [85: .rewind, 86: .fastForward, 87: .stop, 88: .play, 89: .record, 90: .loop][number]
+        case .akaiMPKMiniIV:
+            return [114: .loop, 115: .rewind, 116: .fastForward, 117: .stop, 118: .play, 119: .record][number]
+        case .generic, .automatic:
+            return [115: .rewind, 116: .fastForward, 117: .stop, 118: .play, 119: .record][number]
+        }
+    }
+
+    private func transportCommandForNote(_ note: Int, velocity: Int) -> MIDITransportCommand? {
+        guard velocity > 0 else { return nil }
+        switch effectiveTransportProfile() {
+        case .presonusATOM:
+            return [85: .rewind, 86: .fastForward, 87: .stop, 88: .play, 89: .record, 90: .loop][note]
+        case .akaiMPKMiniIV, .generic, .automatic:
+            return nil
+        }
+    }
+
+    private func decodeUMP(_ word: UInt32,sourceID:String) {
+        func emit(_ message:MIDIMessage){onSourcedEvent?(message,sourceID);onEvent?(message)}
         let mt = (word >> 28) & 0xF
         guard mt == 0x2 else { return }                 // MIDI 1.0 channel voice
         let status = UInt8((word >> 16) & 0xFF)
@@ -215,30 +271,38 @@ public final class MIDIInputManager {
         case 0x90:
             if d2 == 0 {
                 onDebugEvent?("NoteOff note=\(d1) ch=\(ch + 1) via NoteOn velocity 0")
-                onEvent?(.noteOff(note: d1, channel: ch))
+                emit(.noteOff(note: d1, channel: ch))
             } else {
                 onDebugEvent?("NoteOn note=\(d1) velocity=\(d2) ch=\(ch + 1)")
-                onEvent?(.noteOn(note: d1, velocity: Float(d2) / 127, channel: ch))
+                if let command = transportCommandForNote(d1, velocity: d2) {
+                    onTransportCommand?(command)
+                } else {
+                    emit(.noteOn(note: d1, velocity: Float(d2) / 127, channel: ch))
+                }
             }
         case 0x80:
             onDebugEvent?("NoteOff note=\(d1) velocity=\(d2) ch=\(ch + 1)")
-            onEvent?(.noteOff(note: d1, channel: ch))
+            emit(.noteOff(note: d1, channel: ch))
         case 0xB0:
             onDebugEvent?("CC \(d1) value=\(d2) ch=\(ch + 1)")
-            learnControl?(MIDIControlDescriptor(kind: .cc, number: d1, channel: ch))
-            onEvent?(.cc(number: d1, value: Float(d2) / 127, channel: ch))
+            if let command = transportCommandForCC(d1, value: d2) {
+                onTransportCommand?(command)
+            } else {
+                learnControl?(MIDIControlDescriptor(kind: .cc, number: d1, channel: ch))
+                emit(.cc(number: d1, value: Float(d2) / 127, channel: ch))
+            }
         case 0xA0:
             onDebugEvent?("PolyPressure note=\(d1) value=\(d2) ch=\(ch + 1)")
-            onEvent?(.polyPressure(note: d1, value: Float(d2) / 127, channel: ch))
+            emit(.polyPressure(note: d1, value: Float(d2) / 127, channel: ch))
         case 0xD0:
             onDebugEvent?("ChannelPressure value=\(d1) ch=\(ch + 1)")
-            onEvent?(.channelPressure(value: Float(d1) / 127, channel: ch))
+            emit(.channelPressure(value: Float(d1) / 127, channel: ch))
         case 0xE0:
             let raw = (d2 << 7) | d1
             let v = max(-1, min(1, (Float(raw) - 8192.0) / 8192.0))
             onDebugEvent?("PitchBend raw=\(raw) value=\(String(format: "%.4f", Double(v))) ch=\(ch + 1)")
             learnControl?(MIDIControlDescriptor(kind: .pitchBend, channel: ch))
-            onEvent?(.pitchBend(value: v, channel: ch))
+            emit(.pitchBend(value: v, channel: ch))
         default: break
         }
     }

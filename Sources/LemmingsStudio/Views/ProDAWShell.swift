@@ -337,53 +337,81 @@ struct ProTransportStrip: View {
 /// then commit only on Return/focus loss.
 struct TempoTextField: View {
     @Environment(AppState.self) private var app
-    @FocusState private var focused: Bool
-    @State private var text = ""
     var compact = false
 
+    @State private var editing = false
+    @State private var draft = ""
+    @State private var dragStartTempo: Double?
+    @FocusState private var fieldFocused: Bool
+
     var body: some View {
-        TextField("BPM", text: $text)
-            .frame(width: compact ? 54 : 68)
-            .textFieldStyle(.roundedBorder)
-            .focused($focused)
-            .onAppear { syncFromProject(force: true) }
-            .onChange(of: text) { _, newValue in app.noteTempoEditorDraft(newValue) }
-            .onChange(of: app.project.tempo) { _, _ in syncFromProject(force: false) }
-            .onChange(of: app.audibleTempo) { _, _ in syncFromProject(force: false) }
-            .overlay(alignment: .bottomTrailing) {
-                if app.project.tempoAutomationEnabled && !focused {
-                    Text("AUTO")
-                        .font(.system(size: 6, weight: .bold))
-                        .foregroundStyle(.orange)
-                        .offset(x: -4, y: 9)
-                }
+        Group {
+            if editing {
+                TextField("BPM", text: $draft)
+                    .textFieldStyle(.plain)
+                    .multilineTextAlignment(.center)
+                    .focused($fieldFocused)
+                    .onSubmit { commitAndExit() }
+                    .onExitCommand { cancelEditing() }
+                    .onChange(of: fieldFocused) { _, focused in
+                        if !focused && editing { commitAndExit() }
+                    }
+            } else {
+                Text(displayTempo)
+                    .font(.system(size: compact ? 12 : 14, weight: .semibold, design: .monospaced))
+                    .frame(maxWidth: .infinity)
+                    .contentShape(Rectangle())
+                    .gesture(
+                        DragGesture(minimumDistance: 1)
+                            .onChanged { value in
+                                if dragStartTempo == nil { dragStartTempo = app.project.tempo }
+                                let fine = NSEvent.modifierFlags.contains(.shift)
+                                let pointsPerBPM = fine ? 12.0 : 3.0
+                                let delta = -Double(value.translation.height) / pointsPerBPM
+                                app.setProjectTempo((dragStartTempo ?? app.project.tempo) + delta)
+                            }
+                            .onEnded { _ in dragStartTempo = nil }
+                    )
+                    .onTapGesture(count: 2) { beginEditing() }
             }
-            .onChange(of: focused) { _, isFocused in
-                if isFocused {
-                    syncFromProject(force: true)
-                } else {
-                    commit()
-                }
-            }
-            .onSubmit { commit() }
-            .help(app.project.tempoAutomationEnabled ? "Showing automated live BPM. Click/type to edit the base project BPM." : "Type BPM and press Return. Values are clamped from 20 to 300 BPM.")
-    }
-
-    private func syncFromProject(force: Bool) {
-        guard force || !focused else { return }
-        let source = app.project.tempoAutomationEnabled && !focused ? app.audibleTempo : app.project.tempo
-        let bpm = Int(source.rounded())
-        text = "\(bpm)"
-    }
-
-    private func commit() {
-        let cleaned = text.replacingOccurrences(of: ",", with: ".").trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let value = Double(cleaned), value.isFinite else {
-            syncFromProject(force: true)
-            return
         }
-        app.setProjectTempo(value)
-        syncFromProject(force: true)
+        .frame(width: compact ? 58 : 74, height: compact ? 22 : 26)
+        .padding(.horizontal, 5)
+        .background(Color.secondary.opacity(editing ? 0.16 : 0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 5))
+        .overlay(alignment: .bottomTrailing) {
+            if app.project.tempoAutomationEnabled && !editing {
+                Text("AUTO")
+                    .font(.system(size: 6, weight: .bold))
+                    .foregroundStyle(.orange)
+                    .offset(x: -3, y: 8)
+            }
+        }
+        .help("Drag up/down to change tempo. Shift-drag for fine control. Double-click to type.")
+    }
+
+    private var displayTempo: String {
+        let value = app.project.tempoAutomationEnabled ? app.audibleTempo : app.project.tempo
+        return value.rounded() == value ? String(Int(value)) : String(format: "%.1f", value)
+    }
+
+    private func beginEditing() {
+        draft = String(format: "%.2f", app.project.tempo)
+        editing = true
+        DispatchQueue.main.async { fieldFocused = true }
+    }
+
+    private func commitAndExit() {
+        let cleaned = draft.replacingOccurrences(of: ",", with: ".")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if let value = Double(cleaned), value.isFinite { app.setProjectTempo(value) }
+        editing = false
+        fieldFocused = false
+    }
+
+    private func cancelEditing() {
+        editing = false
+        fieldFocused = false
     }
 }
 
@@ -841,7 +869,7 @@ struct EffectsPluginsBrowserView: View {
                         Text(app.pluginScanStatus).font(.caption2).foregroundStyle(LSTheme.dim).lineLimit(1)
                     }
                     if pluginBuckets.isEmpty {
-                        Text("No scanned plugins yet. Scan looks in Audio Unit, VST3, and VST locations. AU instruments can be hosted; VST/VST3 are drag targets / bridge slots until a native VST host path is added.")
+                        Text("No scanned plugins yet. Scan looks in Audio Unit, VST3, and VST locations. AU and VST3 plugins load inside LemmingsStudio.")
                             .font(.caption2).foregroundStyle(LSTheme.dim)
                     } else {
                         ForEach(pluginBuckets) { bucket in
@@ -997,7 +1025,7 @@ struct EffectsPluginsBrowserView: View {
                     .foregroundStyle(LSTheme.dim)
                     .lineLimit(2)
                 if plugin.format != .audioUnit {
-                    Text("Drag to a track. If an AU version exists, Lemmings can prefer it for hosting; otherwise this becomes an external/bridge target slot.")
+                    Text("Drag an AU or VST3 plugin onto a track to load its processor and editor.")
                         .font(.caption2).foregroundStyle(LSTheme.dim)
                 }
             }
@@ -1604,7 +1632,7 @@ struct ClipInspectorDeck: View {
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text(slot.name).font(.caption.bold()).lineLimit(1)
                                     Text("external clip slot").font(.caption2).foregroundStyle(LSTheme.dim)
-                                    Button("Reveal") { app.openPluginGUI(slot) }.controlSize(.mini)
+                                    Button("Open") { app.openPluginGUI(slot) }.controlSize(.mini)
                                 }
                                 .padding(8).background(LSTheme.panel2.opacity(0.7)).clipShape(RoundedRectangle(cornerRadius: 8))
                             }
@@ -1907,11 +1935,12 @@ struct CompactChannelStrip: View {
             HStack(spacing: 5) {
                 Button("M") { app.toggleMute(track) }.foregroundStyle(track.mute ? Color.orange : LSTheme.dim)
                 Button("S") { app.toggleSolo(track) }.foregroundStyle(track.solo ? Color.yellow : LSTheme.dim)
-                Button("A") { app.toggleTrackArm(track) }.foregroundStyle(track.armed ? Color.red : LSTheme.dim)
+                Button("Arm") { app.toggleTrackArm(track) }.foregroundStyle(track.armed ? Color.red : LSTheme.dim)
             }
             .buttonStyle(.plain)
             .font(.caption.bold())
 
+            TrackRecordingInput(track:track).frame(width:92)
             mixerDeviceStack
         }
         .padding(8)

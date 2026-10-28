@@ -548,6 +548,65 @@ final class NSSecureTextFieldFreeText: NSTextField {
 
 // MARK: - Splice browser
 
+enum SpliceKeyRoot: String, CaseIterable, Identifiable {
+    case c = "C"
+    case cSharp = "C♯"
+    case d = "D"
+    case eFlat = "E♭"
+    case e = "E"
+    case f = "F"
+    case fSharp = "F♯"
+    case g = "G"
+    case aFlat = "A♭"
+    case a = "A"
+    case bFlat = "B♭"
+    case b = "B"
+
+    var id: String { rawValue }
+
+    var canonicalASCII: String {
+        switch self {
+        case .c: return "C"
+        case .cSharp: return "C#"
+        case .d: return "D"
+        case .eFlat: return "Eb"
+        case .e: return "E"
+        case .f: return "F"
+        case .fSharp: return "F#"
+        case .g: return "G"
+        case .aFlat: return "Ab"
+        case .a: return "A"
+        case .bFlat: return "Bb"
+        case .b: return "B"
+        }
+    }
+}
+
+enum SpliceKeyMode: String, CaseIterable, Identifiable {
+    case major = "Major"
+    case minor = "Minor"
+    var id: String { rawValue }
+}
+
+enum SpliceMatchMode: String, CaseIterable, Identifiable {
+    case exact = "Exact"
+    case balanced = "Balanced"
+    case broad = "Broad"
+
+    var id: String { rawValue }
+
+    var help: String {
+        switch self {
+        case .exact:
+            return "Require every populated filter to match closely."
+        case .balanced:
+            return "Rank compatible sounds first, including half/double-time and incomplete metadata."
+        case .broad:
+            return "Keep the full MCP result set and use filters only for ranking."
+        }
+    }
+}
+
 enum SpliceSampleTypeFilter: String, CaseIterable, Identifiable {
     case all, loops, oneshots
     var id: String { rawValue }
@@ -572,9 +631,11 @@ struct SpliceBrowserView: View {
     @Environment(AppState.self) private var app
     @State private var query = "industrial house 124 bpm drum loop"
     @State private var showingAdvanced = false
-    @State private var showingOAuth = true
+    @State private var showingOAuth = false
+    @State private var matchMode: SpliceMatchMode = .balanced
     @State private var pastedOAuthCode = ""
-    @State private var filterKey = ""
+    @State private var filterKeyRoot: SpliceKeyRoot? = nil
+    @State private var filterKeyMode: SpliceKeyMode = .minor
     @State private var filterBPM = ""
     @State private var filterGenre = ""
     @State private var sampleType: SpliceSampleTypeFilter = .all
@@ -587,131 +648,144 @@ struct SpliceBrowserView: View {
     private let resultsPerPage = 6
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("Splice MCP").font(.headline).padding(.top, 8)
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Splice").font(.headline)
+                    Text(app.spliceStatus)
+                        .font(.caption2)
+                        .foregroundStyle(app.spliceStatus.hasPrefix("⚠️") ? Color.orange : Color.secondary)
+                        .lineLimit(1)
+                }
                 Spacer()
-                Button("Connect") { Task { await app.connectSplice() } }
-                    .controlSize(.small)
+                if !app.spliceTools.isEmpty {
+                    Label("Connected", systemImage: "checkmark.circle.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.green)
+                }
+                Button { Task { await app.connectSplice() } } label: {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                }
+                .buttonStyle(.borderless)
+                .help("Connect or reconnect Splice MCP")
+                Button { showingAdvanced = true } label: {
+                    Image(systemName: "gearshape")
+                }
+                .buttonStyle(.borderless)
+                .help("Splice MCP settings")
             }
+            .padding(.top, 8)
 
-            HStack {
-                SpliceIsolatedTextField(placeholder: "Search samples by feel, instrument, label…", text: $query, onCommit: searchWithFilters)
+            HStack(spacing: 7) {
+                SpliceIsolatedTextField(
+                    placeholder: "Search by feel, instrument, pack, label…",
+                    text: $query,
+                    onCommit: searchWithFilters
+                )
                 Button("Search") { searchWithFilters() }
             }
 
-            VStack(alignment: .leading, spacing: 6) {
-                Picker("Type", selection: $sampleType) {
-                    ForEach(SpliceSampleTypeFilter.allCases) { t in
-                        Text(t.label).tag(t)
+            HStack(spacing: 7) {
+                Picker("Matching", selection: $matchMode) {
+                    ForEach(SpliceMatchMode.allCases) { mode in
+                        Text(mode.rawValue).tag(mode)
                     }
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
+                .frame(maxWidth: 250)
+                .onChange(of: matchMode) { _, _ in searchWithFilters() }
+
+                Picker("Type", selection: $sampleType) {
+                    ForEach(SpliceSampleTypeFilter.allCases) { type in
+                        Text(type.label).tag(type)
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
                 .onChange(of: sampleType) { _, _ in searchWithFilters() }
-
-                HStack(spacing: 6) {
-                    SpliceIsolatedTextField(placeholder: "Key", text: $filterKey, width: 56, onCommit: searchWithFilters)
-                        .frame(width: 56)
-                    SpliceIsolatedTextField(placeholder: "BPM", text: $filterBPM, width: 62, onCommit: searchWithFilters)
-                        .frame(width: 62)
-                    SpliceIsolatedTextField(placeholder: "Genre", text: $filterGenre, onCommit: searchWithFilters)
-                    Button("Clear") {
-                        filterKey = ""; filterBPM = ""; filterGenre = ""; sampleType = .all
-                        searchWithFilters()
-                    }
-                    .controlSize(.small)
-                }
-                Text("Loops/one-shots and BPM are sent to Splice; key/genre also filter locally when metadata returns. Drag results into Arrangement or a Step Sequencer slot — fetch-on-drop uses official MCP.")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                Spacer()
             }
 
-            DisclosureGroup("Official Splice remote MCP", isExpanded: $showingOAuth) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Use Splice's supported streamable HTTP MCP endpoint. Licensing/downloads stay on the official MCP/OAuth path; browser WebView preview is disabled in beta for stability.")
-                        .font(.caption2).foregroundStyle(.secondary)
-                    Text("type: streamable-http  •  url: https://mcp.splice.com/mcp")
-                        .font(.caption2).monospaced().textSelection(.enabled)
-                    Text("Auth metadata: authorization_servers → https://mcp.splice.com · scopes → openid profile email offline_access")
-                        .font(.caption2).foregroundStyle(.secondary).textSelection(.enabled)
-                    HStack(spacing: 8) {
-                        Button { app.resetSpliceToOfficialRemoteMCP(); Task { await app.connectSplice() } } label: {
-                            Label("Use Official Endpoint", systemImage: "link.badge.plus")
-                        }
-                        Button { app.openSpliceMCPLoginPage() } label: {
-                            Label("Discover + Browser Login", systemImage: "safari")
-                        }
-                        Button("Docs") { NSWorkspace.shared.open(SpliceOfficialMCP.docs) }
+            HStack(spacing: 6) {
+                Picker("Root", selection: $filterKeyRoot) {
+                    Text("Any key").tag(SpliceKeyRoot?.none)
+                    ForEach(SpliceKeyRoot.allCases) { root in
+                        Text(root.rawValue).tag(Optional(root))
                     }
                 }
-                .padding(.top, 4)
-            }
-            .font(.caption)
+                .frame(width: 108)
 
-            DisclosureGroup("MCP settings", isExpanded: $showingAdvanced) {
-                VStack(alignment: .leading, spacing: 6) {
-                    SpliceIsolatedTextField(placeholder: "MCP URL", text: $mcpURL, onCommit: applyMCPSettings)
-                    SpliceIsolatedTextField(placeholder: "Debug bearer/session token — leave blank for official browser MCP", text: $bearerToken, onCommit: applyMCPSettings)
-                    Text("Token pasting is intentionally not part of the supported Splice beta flow. This field is only for partner/debug builds. Public-preview tricks from unofficial clients are intentionally not used for downloads.")
-                        .font(.caption2).foregroundStyle(.secondary)
-                    HStack {
-                        SpliceIsolatedTextField(placeholder: "Download folder", text: $downloadDirectory, onCommit: applyMCPSettings)
-                        Button("Choose…") { chooseDownloadFolder() }
+                Picker("Mode", selection: $filterKeyMode) {
+                    ForEach(SpliceKeyMode.allCases) { mode in
+                        Text(mode.rawValue).tag(mode)
                     }
-                    HStack(spacing: 8) {
-                        Button("Apply Settings") { applyMCPSettings() }
-                        Button("Open Splice MCP page") {
-                            NSWorkspace.shared.open(URL(string: "https://splice.com/tools/mcp-server")!)
+                }
+                .frame(width: 92)
+                .disabled(filterKeyRoot == nil)
+
+                SpliceIsolatedTextField(placeholder: "BPM", text: $filterBPM, width: 62, onCommit: searchWithFilters)
+                    .frame(width: 62)
+                SpliceIsolatedTextField(placeholder: "Genre / tag", text: $filterGenre, onCommit: searchWithFilters)
+                Button("Clear") { clearAllFilters() }.controlSize(.small)
+            }
+
+            if hasActiveFilters {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 5) {
+                        if let key = selectedMusicalKey {
+                            filterChip(key) { filterKeyRoot = nil; searchWithFilters() }
                         }
-                        if !app.spliceTools.isEmpty {
-                            Text(app.spliceTools.map(\.name).joined(separator: " · "))
-                                .font(.caption2).foregroundStyle(.secondary).lineLimit(2)
+                        if !filterBPM.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            filterChip("\(filterBPM) BPM") { filterBPM = ""; searchWithFilters() }
+                        }
+                        if !filterGenre.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            filterChip(filterGenre) { filterGenre = ""; searchWithFilters() }
+                        }
+                        if sampleType != .all {
+                            filterChip(sampleType.label) { sampleType = .all; searchWithFilters() }
                         }
                     }
                 }
-                .padding(.top, 4)
             }
-            .font(.caption)
 
-            DisclosureGroup("Open sample library downloader") {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Downloads are optional and stored in your User Library/Open Samples folder. Lemmings does not silently bundle third-party audio; verify license text before redistribution.")
-                        .font(.caption2).foregroundStyle(.secondary)
-                    ForEach(AppState.OpenSampleSource.allCases) { source in
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(source.rawValue).font(.caption.bold())
-                                Text(source.licenseNote).font(.caption2).foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            Button(source.url == nil ? "Info" : "Download") { app.downloadOpenSampleLibrary(source) }
-                                .controlSize(.small)
-                        }
-                    }
-                    Text(app.openSampleStatus).font(.caption2).foregroundStyle(app.openSampleStatus.hasPrefix("⚠️") ? Color.orange : Color.secondary)
-                }
-                .padding(.top, 4)
-            }
-            .font(.caption)
-
-            Text(app.spliceStatus)
+            Text(matchMode.help)
                 .font(.caption2)
-                .foregroundStyle(app.spliceStatus.hasPrefix("⚠️") ? Color.orange : Color.secondary)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
 
-            if app.spliceResults.isEmpty {
-                Text("Search goes through Splice’s official remote streamable HTTP MCP server. First use may require browser login.")
-                    .font(.caption2).foregroundStyle(.secondary)
-                    .padding(.vertical, 6)
-            } else if filteredSpliceResults.isEmpty {
-                Text("No results match the current local key/BPM/genre filters. Try clearing a filter or searching broader.")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .padding(.vertical, 6)
-            } else {
-                SpliceResultsAppKitList(samples: pagedSpliceResults, app: app, onTagClick: applySpliceTagFilter)
-                    .frame(height: pagedListHeight)
-                if pageCount > 1 {
+            Divider()
+
+            Group {
+                if app.spliceResults.isEmpty {
+                    VStack(spacing: 8) {
+                        Image(systemName: "waveform.badge.magnifyingglass")
+                            .font(.title2)
+                            .foregroundStyle(.secondary)
+                        Text("Search Splice’s official MCP catalogue").font(.caption)
+                        Text("The first search may open browser authentication.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 180)
+                } else if filteredSpliceResults.isEmpty {
+                    VStack(spacing: 7) {
+                        Text("No exact matches").font(.caption.bold())
+                        Text("Switch to Balanced or Broad to keep near-matches and sounds with incomplete metadata.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                        Button("Use Balanced Matching") {
+                            matchMode = .balanced
+                            searchWithFilters()
+                        }
+                        .controlSize(.small)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 160)
+                } else {
+                    SpliceResultsAppKitList(samples: pagedSpliceResults, app: app, onTagClick: applySpliceTagFilter)
+                        .frame(minHeight: 220, maxHeight: .infinity)
+
                     HStack(spacing: 10) {
                         Button { if resultsPage > 0 { resultsPage -= 1 } } label: {
                             Image(systemName: "chevron.left")
@@ -719,26 +793,184 @@ struct SpliceBrowserView: View {
                         .controlSize(.small)
                         .disabled(resultsPage == 0)
                         Text("Page \(resultsPage + 1) of \(pageCount)")
-                            .font(.caption2).foregroundStyle(.secondary)
-                        Button { if resultsPage < pageCount - 1 { resultsPage += 1 } } label: {
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        Button {
+                            if resultsPage < pageCount - 1 {
+                                resultsPage += 1
+                            } else if app.spliceHasMoreResults {
+                                loadNextSplicePage()
+                            }
+                        } label: {
                             Image(systemName: "chevron.right")
                         }
                         .controlSize(.small)
-                        .disabled(resultsPage >= pageCount - 1)
+                        .disabled(resultsPage >= pageCount - 1 && !app.spliceHasMoreResults)
+                        if app.spliceHasMoreResults {
+                            Button("Load More") { loadNextSplicePage() }.controlSize(.small)
+                        }
                         Spacer()
-                        Text("\(filteredSpliceResults.count) result\(filteredSpliceResults.count == 1 ? "" : "s")")
-                            .font(.caption2).foregroundStyle(.secondary)
+                        Text("\(filteredSpliceResults.count) shown · \(app.spliceResults.count) loaded")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
                     }
-                    .padding(.top, 2)
                 }
             }
+            .layoutPriority(1)
         }
-        .padding(.horizontal, 10).padding(.bottom, 12)
-        .onChange(of: app.spliceResults.count) { _, _ in resultsPage = 0 }
+        .padding(.horizontal, 10)
+        .padding(.bottom, 10)
+        .sheet(isPresented: $showingAdvanced) { spliceSettingsSheet }
         .onAppear {
             syncMCPSettingsIfNeeded()
             if app.spliceResults.isEmpty { searchWithFilters() }
         }
+    }
+
+    @ViewBuilder
+    private var spliceSettingsSheet: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack {
+                    Text("Splice MCP Settings").font(.title3.bold())
+                    Spacer()
+                    Button("Done") { showingAdvanced = false }.keyboardShortcut(.defaultAction)
+                }
+
+                GroupBox("Official remote MCP") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("LemmingsStudio uses Splice’s supported streamable HTTP MCP endpoint. Licensing and downloads remain on the official OAuth path.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text("https://mcp.splice.com/mcp")
+                            .font(.caption.monospaced())
+                            .textSelection(.enabled)
+                        HStack {
+                            Button("Use Official Endpoint") {
+                                app.resetSpliceToOfficialRemoteMCP()
+                                syncSettingsFromApp()
+                                Task { await app.connectSplice() }
+                            }
+                            Button("Browser Login") { app.openSpliceMCPLoginPage() }
+                            Button("Docs") { NSWorkspace.shared.open(SpliceOfficialMCP.docs) }
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+
+                GroupBox("Connection and downloads") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        SpliceIsolatedTextField(placeholder: "MCP URL", text: $mcpURL, onCommit: applyMCPSettings)
+                    SecureField(
+                        "Debug bearer/session token — hidden",
+                        text: $bearerToken
+                    )
+                    .textFieldStyle(.roundedBorder)
+                    .privacySensitive()
+                    .onSubmit { applyMCPSettings() }
+                    .help("Hidden while typing and marked privacy-sensitive for screen recording.")
+                        HStack {
+                            SpliceIsolatedTextField(placeholder: "Download folder", text: $downloadDirectory, onCommit: applyMCPSettings)
+                            Button("Choose…") { chooseDownloadFolder() }
+                        }
+                        HStack {
+                            Button("Apply") { applyMCPSettings() }
+                            Button("Open Splice MCP Page") {
+                                NSWorkspace.shared.open(URL(string: "https://splice.com/tools/mcp-server")!)
+                            }
+                        }
+                        if !app.spliceTools.isEmpty {
+                            Text(app.spliceTools.map(\.name).joined(separator: " · "))
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+
+                GroupBox("Open sample libraries") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Optional downloads are stored in the User Library/Open Samples folder. Verify each library’s licence before redistribution.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        ForEach(AppState.OpenSampleSource.allCases) { source in
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(source.rawValue).font(.caption.bold())
+                                    Text(source.licenseNote).font(.caption2).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Button(source.url == nil ? "Info" : "Download") {
+                                    app.downloadOpenSampleLibrary(source)
+                                }
+                                .controlSize(.small)
+                            }
+                        }
+                                            if let progress = app.openSampleDownloadProgress {
+                                                ProgressView(value: progress, total: 1) {
+                                                    Text(app.openSampleDownloadSourceName ?? "Downloading sample library")
+                                                        .font(.caption2)
+                                                } currentValueLabel: {
+                                                    Text("\(Int(progress * 100))%")
+                                                        .font(.caption2.monospacedDigit())
+                                                }
+                                                if app.openSampleDownloadTotalBytes > 0 {
+                                                    Text(
+                                                        "\(ByteCountFormatter.string(fromByteCount: app.openSampleDownloadBytes, countStyle: .file)) of \(ByteCountFormatter.string(fromByteCount: app.openSampleDownloadTotalBytes, countStyle: .file))"
+                                                    )
+                                                    .font(.caption2)
+                                                    .foregroundStyle(.secondary)
+                                                }
+                                            } else if app.openSampleDownloadSourceName != nil {
+                                                ProgressView().controlSize(.small)
+                                            }
+                        Text(app.openSampleStatus)
+                            .font(.caption2)
+                            .foregroundStyle(app.openSampleStatus.hasPrefix("⚠️") ? Color.orange : Color.secondary)
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+            .padding(18)
+        }
+        .frame(minWidth: 560, minHeight: 520)
+    }
+
+    private var hasActiveFilters: Bool {
+        filterKeyRoot != nil
+            || !filterBPM.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !filterGenre.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || sampleType != .all
+    }
+
+    private func filterChip(_ title: String, remove: @escaping () -> Void) -> some View {
+        HStack(spacing: 3) {
+            Text(title).font(.caption2)
+            Button(action: remove) {
+                Image(systemName: "xmark.circle.fill").font(.caption2)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(Color.secondary.opacity(0.12))
+        .clipShape(Capsule())
+    }
+
+    private func clearAllFilters() {
+        filterKeyRoot = nil
+        filterKeyMode = .minor
+        filterBPM = ""
+        filterGenre = ""
+        sampleType = .all
+        searchWithFilters()
+    }
+
+    private func syncSettingsFromApp() {
+        mcpURL = app.spliceMCPURL
+        bearerToken = app.spliceBearerToken
+        downloadDirectory = app.spliceDownloadDirectory
     }
 
     /// Results for the current page. The official MCP returns one block per search
@@ -762,39 +994,165 @@ struct SpliceBrowserView: View {
         return min(max(140, count * rowHeight), CGFloat(resultsPerPage) * rowHeight)
     }
 
+    private var selectedMusicalKey: String? {
+        guard let root = filterKeyRoot else { return nil }
+        return "\(root.canonicalASCII) \(filterKeyMode.rawValue.lowercased())"
+    }
+
+    private func normalizedSpliceKey(_ value: String) -> String {
+        var key = value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "♯", with: "#")
+            .replacingOccurrences(of: "♭", with: "b")
+            .replacingOccurrences(of: "major", with: "maj")
+            .replacingOccurrences(of: "minor", with: "min")
+            .replacingOccurrences(of: " ", with: "")
+
+        let enharmonic: [String: String] = [
+            "db": "c#", "d#": "eb", "gb": "f#",
+            "g#": "ab", "a#": "bb"
+        ]
+
+        for (from, to) in enharmonic where key.hasPrefix(from) {
+            key = to + key.dropFirst(from.count)
+            break
+        }
+        return key
+    }
+
     private var filteredSpliceResults: [SpliceSample] {
-        app.spliceResults.filter { sample in
-            let keyOK: Bool = {
-                let wanted = filterKey.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-                guard !wanted.isEmpty else { return true }
-                return sample.key?.lowercased().replacingOccurrences(of: " ", with: "") == wanted.replacingOccurrences(of: " ", with: "")
-            }()
-            let bpmOK: Bool = {
-                let raw = filterBPM.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !raw.isEmpty else { return true }
-                guard let wanted = Int(raw), let bpm = sample.bpm else { return true }
-                return abs(bpm - wanted) <= 3
-            }()
-            let genreOK: Bool = {
-                let wanted = filterGenre.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-                guard !wanted.isEmpty else { return true }
-                var fields = [sample.name]
-                fields.append(contentsOf: [sample.packName, sample.creatorName, sample.instrument, sample.soundType].compactMap { $0 })
-                fields.append(contentsOf: sample.tags)
-                let haystack = fields.joined(separator: " ").lowercased()
-                return haystack.contains(wanted)
-            }()
-            return keyOK && bpmOK && genreOK
+        let scored = app.spliceResults.map { sample in
+            (sample: sample, score: spliceMatchScore(sample))
+        }
+        switch matchMode {
+        case .exact:
+            return scored
+                .filter { $0.score.exactMatch }
+                .sorted { lhs, rhs in
+                    if lhs.score.points != rhs.score.points { return lhs.score.points > rhs.score.points }
+                    return lhs.sample.name.localizedStandardCompare(rhs.sample.name) == .orderedAscending
+                }
+                .map(\.sample)
+        case .balanced:
+            let active = hasActiveFilters
+            return scored
+                .filter { !active || $0.score.points > 0 || $0.score.metadataMissing }
+                .sorted { lhs, rhs in
+                    if lhs.score.points != rhs.score.points { return lhs.score.points > rhs.score.points }
+                    return lhs.sample.name.localizedStandardCompare(rhs.sample.name) == .orderedAscending
+                }
+                .map(\.sample)
+        case .broad:
+            return scored
+                .sorted { lhs, rhs in
+                    if lhs.score.points != rhs.score.points { return lhs.score.points > rhs.score.points }
+                    return lhs.sample.name.localizedStandardCompare(rhs.sample.name) == .orderedAscending
+                }
+                .map(\.sample)
         }
     }
+
+    private struct SpliceMatchScore {
+        var points: Int
+        var exactMatch: Bool
+        var metadataMissing: Bool
+    }
+
+    private func spliceMatchScore(_ sample: SpliceSample) -> SpliceMatchScore {
+        var points = 0
+        var exact = true
+        var missing = false
+
+        if let wantedKey = selectedMusicalKey {
+            if let returned = sample.key, !returned.isEmpty {
+                switch keyCompatibility(returned: returned, wanted: wantedKey) {
+                case .exact: points += 8
+                case .relative: points += 5; exact = false
+                case .none: exact = false
+                }
+            } else {
+                missing = true
+                exact = false
+            }
+        }
+
+        if let wantedBPM = Int(filterBPM.trimmingCharacters(in: .whitespacesAndNewlines)) {
+            if let bpm = sample.bpm {
+                let distance = compatibleBPMDistance(sampleBPM: bpm, wantedBPM: wantedBPM)
+                if distance <= 3 { points += 8 }
+                else if distance <= 8 { points += 5; exact = false }
+                else if distance <= 15 { points += 2; exact = false }
+                else { exact = false }
+            } else {
+                missing = true
+                exact = false
+            }
+        }
+
+        let genreTokens = filterGenre
+            .lowercased()
+            .split(whereSeparator: { $0.isWhitespace || $0 == "," })
+            .map(String.init)
+            .filter { !$0.isEmpty }
+        if !genreTokens.isEmpty {
+            var fields = [sample.name]
+            fields.append(contentsOf: [sample.packName, sample.creatorName, sample.instrument, sample.soundType].compactMap { $0 })
+            fields.append(contentsOf: sample.tags)
+            let haystack = fields.joined(separator: " ").lowercased()
+            let matches = genreTokens.filter { haystack.contains($0) }.count
+            if matches == genreTokens.count { points += 6 + matches }
+            else if matches > 0 { points += 2 + matches; exact = false }
+            else {
+                exact = false
+                if sample.tags.isEmpty && sample.instrument == nil && sample.soundType == nil { missing = true }
+            }
+        }
+
+        if sampleType != .all {
+            if let returnedType = sample.soundType?.lowercased() {
+                let wantsLoop = sampleType == .loops
+                let typeMatches = wantsLoop
+                    ? returnedType.contains("loop")
+                    : returnedType.contains("one") || returnedType.contains("shot")
+                if typeMatches { points += 5 } else { exact = false }
+            } else {
+                missing = true
+                exact = false
+            }
+        }
+
+        return SpliceMatchScore(points: points, exactMatch: exact, metadataMissing: missing)
+    }
+
+    private enum SpliceKeyCompatibility { case exact, relative, none }
+
+    private func keyCompatibility(returned: String, wanted: String) -> SpliceKeyCompatibility {
+        let returnedKey = normalizedSpliceKey(returned)
+        let wantedKey = normalizedSpliceKey(wanted)
+        if returnedKey == wantedKey { return .exact }
+        let relativePairs: [String: String] = [
+            "cmaj": "amin", "c#maj": "a#min", "dmaj": "bmin",
+            "ebmaj": "cmin", "emaj": "c#min", "fmaj": "dmin",
+            "f#maj": "d#min", "gmaj": "emin", "abmaj": "fmin",
+            "amaj": "f#min", "bbmaj": "gmin", "bmaj": "g#min"
+        ]
+        if relativePairs[wantedKey] == returnedKey || relativePairs[returnedKey] == wantedKey { return .relative }
+        return .none
+    }
+
+    private func compatibleBPMDistance(sampleBPM: Int, wantedBPM: Int) -> Int {
+        [sampleBPM, sampleBPM * 2, max(1, sampleBPM / 2)]
+            .map { abs($0 - wantedBPM) }
+            .min() ?? Int.max
+    }
+
 
 
     private func syncMCPSettingsIfNeeded() {
         guard !settingsLoaded else { return }
         settingsLoaded = true
-        mcpURL = app.spliceMCPURL
-        bearerToken = app.spliceBearerToken
-        downloadDirectory = app.spliceDownloadDirectory
+        syncSettingsFromApp()
     }
 
     private func applyMCPSettings() {
@@ -805,27 +1163,78 @@ struct SpliceBrowserView: View {
 
     private var filteredSearchQuery: String {
         var parts = [query.trimmingCharacters(in: .whitespacesAndNewlines)]
-        let key = filterKey.trimmingCharacters(in: .whitespacesAndNewlines)
         let bpm = filterBPM.trimmingCharacters(in: .whitespacesAndNewlines)
         let genre = filterGenre.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !key.isEmpty { parts.append("key " + key) }
-        if !bpm.isEmpty { parts.append(bpm + " bpm") }
-        if !genre.isEmpty { parts.append(genre) }
+        switch matchMode {
+        case .exact:
+            if let key = selectedMusicalKey { parts.append("key " + key) }
+            if !bpm.isEmpty { parts.append(bpm + " bpm") }
+            if !genre.isEmpty { parts.append(genre) }
+        case .balanced:
+            if !genre.isEmpty { parts.append(genre) }
+        case .broad:
+            break
+        }
         return parts.filter { !$0.isEmpty }.joined(separator: " ")
+    }
+
+    private var spliceBPMRange: (Int?, Int?) {
+        guard let wanted = Int(filterBPM.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+            return (nil, nil)
+        }
+        switch matchMode {
+        case .exact: return (max(20, wanted - 3), wanted + 3)
+        case .balanced: return (max(20, wanted - 8), wanted + 8)
+        case .broad: return (nil, nil)
+        }
+    }
+
+    private var serverMusicalKey: String? {
+        matchMode == .exact ? selectedMusicalKey : nil
     }
 
     private func searchWithFilters() {
         let searchText = filteredSearchQuery
         resultsPage = 0
         let type = sampleType.mcpValue
-        var bpmMin: Int? = nil
-        var bpmMax: Int? = nil
-        if let wanted = Int(filterBPM.trimmingCharacters(in: .whitespacesAndNewlines)) {
-            bpmMin = max(20, wanted - 3)
-            bpmMax = wanted + 3
-        }
+        let range = spliceBPMRange
         DispatchQueue.main.async {
-            Task { await app.searchSplice(query: searchText, type: type, bpmMin: bpmMin, bpmMax: bpmMax) }
+            Task {
+                await app.searchSplice(
+                    query: searchText,
+                    type: type,
+                    bpmMin: range.0,
+                    bpmMax: range.1,
+                    musicalKey: serverMusicalKey,
+                    page: 1,
+                    append: false
+                )
+            }
+        }
+    }
+
+    private func loadNextSplicePage() {
+        let requestedPage = max(2, app.spliceLoadedPage + 1)
+        let searchText = filteredSearchQuery
+        let type = sampleType.mcpValue
+        let range = spliceBPMRange
+
+        DispatchQueue.main.async {
+            Task {
+                let oldCount = app.spliceResults.count
+                await app.searchSplice(
+                    query: searchText,
+                    type: type,
+                    bpmMin: range.0,
+                    bpmMax: range.1,
+                    musicalKey: serverMusicalKey,
+                    page: requestedPage,
+                    append: true
+                )
+                if app.spliceResults.count > oldCount {
+                    resultsPage = min(resultsPage + 1, pageCount - 1)
+                }
+            }
         }
     }
 

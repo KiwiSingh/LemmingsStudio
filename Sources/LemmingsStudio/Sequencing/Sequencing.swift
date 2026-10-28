@@ -24,6 +24,9 @@ public struct ClipNote: Identifiable, Hashable {
     public var loopEnabled: Bool = true
     public var loopLengthBeats: Double = 4
     public var swingAmount: Double = 0
+    public var sourceTempo: Double? = nil
+    public var tempoAutomationEnabled: Bool = false
+    public var tempoPoints: [TempoPoint] = []
     public var notes: [ClipNote]
     public var color: Color
 
@@ -330,6 +333,8 @@ public struct ExternalPluginSlot: Identifiable, Hashable, Sendable {
     public var role: PluginRole
     public var path: String?
     public var hosted: Bool
+    public var presetStateBase64: String? = nil
+    public var presetName: String? = nil
 
     /// Stable automation node id for third-party plug-ins. Do not use `id`,
     /// because that UUID is recreated when a project is loaded. Automation lanes
@@ -396,6 +401,7 @@ public enum AudioInputMonitorMode: String, Codable, CaseIterable, Identifiable {
     // Device chain (Ableton-style insert effects) + parameter automation.
     public var devices: [DeviceModel] = []
     public var automationLanes: [AutomationLane] = []
+    public var pitchBendRangeSemitones: Int = 2
 
     // Recording / live input (MIDI + audio).
     public var armed = false             // record-enabled
@@ -460,6 +466,8 @@ public enum AudioInputMonitorMode: String, Codable, CaseIterable, Identifiable {
     public var displayName: String = "Audio Clip"
     public var sourceURL: String? = nil
     public var detectedTempo: Double? = nil
+    public var tempoAutomationEnabled: Bool = false
+    public var tempoPoints: [TempoPoint] = []
     /// True once the user has overridden the detected BPM in the clip inspector.
     public var manualTempoOverride: Bool = false
     public var loopEnabled: Bool = true
@@ -499,6 +507,23 @@ public enum AudioInputMonitorMode: String, Codable, CaseIterable, Identifiable {
     /// What the engine actually plays: the warped buffer if warping is on and cached.
     public var activeSamples: [Float] { (warpEnabled ? warpedSamples : nil) ?? samples }
     public var activeSampleRate: Double { sampleRate }
+
+    public func playbackPreviewSamples(projectTempo: Double, maximumCount: Int = 16_384) -> [Float] {
+        let source = activeSamples
+        guard !source.isEmpty, activeSampleRate > 0 else { return [] }
+        let tempo = max(20, projectTempo)
+        let secondsPerBeat = 60.0 / tempo
+        let trimIndex = min(source.count, Int(max(0, trimStartBeats) * secondsPerBeat * activeSampleRate * pitchRatio))
+        let outCount = max(1, min(maximumCount, Int(arrangementLengthBeats(projectTempo: tempo) * secondsPerBeat * activeSampleRate)))
+        let available = max(1, source.count - trimIndex)
+        var out:[Float]=[]; out.reserveCapacity(outCount)
+        for i in 0..<outCount {
+            let raw = Int(Double(i) * Double(available) / Double(outCount) * pitchRatio)
+            let off = loopEnabled ? raw % available : min(available - 1, raw)
+            out.append(source[trimIndex + off] * gainLinear)
+        }
+        return out
+    }
 
     public func naturalLengthBeats(projectTempo: Double) -> Double {
         let full = (Double(activeSamples.count) / activeSampleRate) * projectTempo / 60.0

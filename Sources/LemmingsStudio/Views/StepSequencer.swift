@@ -54,6 +54,15 @@ struct StepSequencerView: View {
                 Button("Dubstep Wrangler Kit") { app.applyDrumKit(.dubstep, to: track, loadGroove: true) }
                 Button("Rock Kit") { app.applyDrumKit(.rock, to: track, loadGroove: true) }
                 Button("Orchestral Kit") { app.applyDrumKit(.orchestral, to: track, loadGroove: true) }
+                Divider()
+                Button("Afro House Kit") { app.applyDrumKit(.afroHouse, to: track, loadGroove: true) }
+                Button("Amapiano Kit") { app.applyDrumKit(.amapiano, to: track, loadGroove: true) }
+                Button("Jersey Club Kit") { app.applyDrumKit(.jerseyClub, to: track, loadGroove: true) }
+                Button("UK Garage Kit") { app.applyDrumKit(.ukGarage, to: track, loadGroove: true) }
+                Button("Drum & Bass Kit") { app.applyDrumKit(.drumAndBass, to: track, loadGroove: true) }
+                Button("Trap Kit") { app.applyDrumKit(.trap, to: track, loadGroove: true) }
+                Button("Phonk Kit") { app.applyDrumKit(.phonk, to: track, loadGroove: true) }
+                Button("Baile Funk Kit") { app.applyDrumKit(.baileFunk, to: track, loadGroove: true) }
             }.controlSize(.small)
             Button("Drum Machine") {
                 app.applyDrumKit(.techHouse, to: track, loadGroove: false)
@@ -255,32 +264,15 @@ struct StepSequencerView: View {
         return Int(beat * Double(pattern.stepsPerBeat)) % pattern.stepCount
     }
 
-    private func handleSequencerDrop(_ providers: [NSItemProvider], track: Track, step: Int?, note: Int) -> Bool {
-        for provider in providers where provider.canLoadObject(ofClass: NSString.self) {
-            provider.loadObject(ofClass: NSString.self) { object, _ in
-                guard let text = object as? String else { return }
-                DispatchQueue.main.async {
-                    if !app.handlePluginDropTextOnStepSequencer(text, on: track, step: step, laneNote: note) {
-                        _ = app.handleSampleDropText(text, on: track, step: step, note: note)
-                    }
-                }
+    private func handleSequencerDrop(_ providers:[NSItemProvider],track:Track,step:Int?,note:Int)->Bool {
+        OneShotDrop.accept(providers,onURL:{url in
+            guard app.project.tracks.contains(where:{$0 === track}) else {return}
+            _=app.handleSampleDropText(url.absoluteString,on:track,step:step,note:note)
+        },onText:{text in
+            if !app.handlePluginDropTextOnStepSequencer(text,on:track,step:step,laneNote:note) {
+                _=app.handleSampleDropText(text,on:track,step:step,note:note)
             }
-            return true
-        }
-        for provider in providers where provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
-            provider.loadDataRepresentation(forTypeIdentifier: UTType.fileURL.identifier) { data, _ in
-                guard let data,
-                      let raw = String(data: data, encoding: .utf8) else { return }
-                let cleaned = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-                DispatchQueue.main.async {
-                    if !app.handlePluginDropTextOnStepSequencer(cleaned, on: track, step: step, laneNote: note) {
-                        _ = app.handleSampleDropText(cleaned, on: track, step: step, note: note)
-                    }
-                }
-            }
-            return true
-        }
-        return false
+        },onError:{error in app.editStatus="Could not load one-shot: \(error)"})
     }
 
     private func toggle(_ pattern: StepPattern, step: Int, note: Int) {

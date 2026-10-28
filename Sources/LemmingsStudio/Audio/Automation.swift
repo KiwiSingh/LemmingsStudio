@@ -40,6 +40,16 @@ public protocol Automatable: AnyObject {
 
 public enum AutomationSpecialParam {
     public static let deviceOn = "__device_on__"
+    public static let midiPitchBendPrefix = "__midi_pitch_bend_ch_"
+
+    public static func midiPitchBend(channel: Int) -> String {
+        midiPitchBendPrefix + String(max(0, min(15, channel)))
+    }
+
+    public static func pitchBendChannel(from paramID: String) -> Int? {
+        guard paramID.hasPrefix(midiPitchBendPrefix) else { return nil }
+        return Int(paramID.dropFirst(midiPitchBendPrefix.count))
+    }
 }
 
 // MARK: - Automation lane model

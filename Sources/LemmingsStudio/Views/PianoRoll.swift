@@ -87,8 +87,60 @@ struct PianoRollView: View {
                         .disabled(c.notes.isEmpty)
                     Button("Delete Selected") { deleteSelectedNotes(in: c) }.controlSize(.small)
                         .disabled(PianoRollState.shared.selectedNoteIDs.isEmpty)
+                    Button("− Oct") { transposeSelectedNotes(in: c, semitones: -12) }
+                        .controlSize(.small)
+                        .keyboardShortcut(.downArrow, modifiers: [.shift])
+                        .disabled(PianoRollState.shared.selectedNoteIDs.isEmpty)
+                    Button("+ Oct") { transposeSelectedNotes(in: c, semitones: 12) }
+                        .controlSize(.small)
+                        .keyboardShortcut(.upArrow, modifiers: [.shift])
+                        .disabled(PianoRollState.shared.selectedNoteIDs.isEmpty)
                     Button(PianoRollState.shared.selectedNoteIDs.isEmpty ? "Fit Clip to Scale" : "Fit Selected to Scale") { fitNotesToScale(in: c) }.controlSize(.small)
-                    Button("Generative Disco") { app.selectedClipID = c.id; app.generativeDisco(on: c) }.controlSize(.small)
+                    Menu("Generative Disco") {
+                        Button("Generate New Pattern") {
+                            app.selectedClipID = c.id
+                            app.generativeDisco(on: c)
+                        }
+                        Button("New Random Seed") {
+                            app.randomizeGenerativeDiscoSeed()
+                            app.selectedClipID = c.id
+                            app.generativeDisco(on: c)
+                        }
+                        Toggle(
+                    "Lock Seed",
+                    isOn: Binding(
+                        get: { app.generativeDiscoSeedLocked },
+                        set: { app.generativeDiscoSeedLocked = $0 }
+                    )
+                )
+                        Divider()
+                        Menu("Variation") {
+                            Button("Tight · 25%") { app.generativeDiscoVariation = 0.25 }
+                            Button("Balanced · 60%") { app.generativeDiscoVariation = 0.60 }
+                            Button("Loose · 80%") { app.generativeDiscoVariation = 0.80 }
+                            Button("Wild · 100%") { app.generativeDiscoVariation = 1.00 }
+                        }
+                        Menu("Chaos") {
+                            Button("Low · 10%") { app.generativeDiscoChaos = 0.10 }
+                            Button("Medium · 30%") { app.generativeDiscoChaos = 0.30 }
+                            Button("High · 60%") { app.generativeDiscoChaos = 0.60 }
+                            Button("Maximum · 100%") { app.generativeDiscoChaos = 1.00 }
+                        }
+                        Divider()
+                        Button("Regenerate Bass Only") {
+                            app.selectedClipID = c.id
+                            app.generativeDisco(on: c, regenerating: [.bass])
+                        }
+                        Button("Regenerate Harmony Only") {
+                            app.selectedClipID = c.id
+                            app.generativeDisco(on: c, regenerating: [.harmony])
+                        }
+                        Button("Regenerate Accents Only") {
+                            app.selectedClipID = c.id
+                            app.generativeDisco(on: c, regenerating: [.accents])
+                        }
+                    }
+                    .controlSize(.small)
                 }
                 Text(app.project.keySnapEnabled ? "Snap: \(app.project.key.displayName)" : "Snap off")
                     .font(.caption).foregroundStyle(app.project.keySnapEnabled ? Color.green : Color.secondary)
@@ -97,11 +149,15 @@ struct PianoRollView: View {
             Divider()
 
             if let clip = clip {
-                ScrollView([.vertical, .horizontal]) {
-                    HStack(spacing: 0) {
-                        keyboard
-                        editor(clip)
+                VStack(spacing: 0) {
+                    ScrollView([.vertical, .horizontal]) {
+                        HStack(spacing: 0) {
+                            keyboard
+                            editor(clip)
+                        }
                     }
+                    Divider()
+                    pitchBendLane(clip)
                 }
             } else {
                 Spacer()
@@ -123,6 +179,14 @@ struct PianoRollView: View {
                 Spacer()
             }
         }
+        .background(PianoRollKeyCapture { command in
+            guard let clip=clip else {return false}
+            switch command {
+            case .selectAll:selectAllNotes(in:clip)
+            case .transpose(let delta):transposeSelectedNotes(in:clip,semitones:delta)
+            }
+            return true
+        })
     }
 
     private var pitches: [Int] { Array(lowPitch...highPitch).reversed() }
@@ -273,6 +337,7 @@ struct PianoRollView: View {
     }
 
     private func selectNote(_ id: UUID, additive: Bool) {
+        NSApp.keyWindow?.makeFirstResponder(nil)
         app.focusPianoRollUndoContext()
         if additive {
             if PianoRollState.shared.selectedNoteIDs.contains(id) {
@@ -286,6 +351,7 @@ struct PianoRollView: View {
     }
 
     private func selectAllNotes(in clip: Clip) {
+        NSApp.keyWindow?.makeFirstResponder(nil)
         app.focusPianoRollUndoContext()
         PianoRollState.shared.clipID = clip.id
         PianoRollState.shared.selectedNoteIDs = Set(clip.notes.map(\.id))
@@ -303,6 +369,133 @@ struct PianoRollView: View {
         guard after.count != clip.notes.count else { return }
         app.replaceMIDINotes(forClipID: clip.id, with: after, undoName: doomed.count == 1 ? "Delete Piano Roll Note" : "Delete Piano Roll Notes", context: .pianoRoll)
         PianoRollState.shared.selectedNoteIDs.subtract(doomed)
+    }
+
+    private func transposeSelectedNotes(in clip: Clip, semitones: Int) {
+        app.focusPianoRollUndoContext()
+        let selected = PianoRollState.shared.selectedNoteIDs
+        guard !selected.isEmpty else { return }
+        let selectedNotes = clip.notes.filter { selected.contains($0.id) }
+        guard !selectedNotes.isEmpty else { return }
+        let lowest = selectedNotes.map(\.pitch).min() ?? 0
+        let highest = selectedNotes.map(\.pitch).max() ?? 127
+        let safeDelta = max(-lowest, min(127 - highest, semitones))
+        guard safeDelta != 0 else { return }
+        let after = clip.notes.map { note -> ClipNote in
+            guard selected.contains(note.id) else { return note }
+            var copy = note
+            copy.pitch += safeDelta
+            return copy
+        }
+        app.replaceMIDINotes(
+            forClipID: clip.id,
+            with: after,
+            undoName: safeDelta > 0 ? "Transpose Notes Up an Octave" : "Transpose Notes Down an Octave",
+            context: .pianoRoll
+        )
+    }
+
+    private func pitchBendLane(_ clip: Clip) -> some View {
+        let track = app.project.tracks.first { track in
+            track.clips.contains { $0.id == clip.id }
+        }
+        let channel = 0
+        let paramID = AutomationSpecialParam.midiPitchBend(channel: channel)
+        let lane = track?.automationLanes.first {
+            $0.nodeID == "instrument" && $0.paramID == paramID
+        }
+        let points = lane?.points ?? []
+        let width = max(CGFloat(clip.lengthBeats) * pxPerBeat, 240)
+        let laneHeight: CGFloat = 76
+
+        return HStack(spacing: 0) {
+            VStack(alignment: .trailing, spacing: 0) {
+                Text("+")
+                Spacer()
+                Text("Pitch Bend").font(.caption2)
+                Spacer()
+                Text("−")
+            }
+            .foregroundStyle(.secondary)
+            .frame(width: 45, height: laneHeight)
+            .padding(.trailing, 3)
+
+            ScrollView(.horizontal) {
+                ZStack(alignment: .topLeading) {
+                    Canvas { context, size in
+                        let centerY = size.height / 2
+                        var center = Path()
+                        center.move(to: CGPoint(x: 0, y: centerY))
+                        center.addLine(to: CGPoint(x: size.width, y: centerY))
+                        context.stroke(center, with: .color(.secondary.opacity(0.35)), lineWidth: 1)
+                        for beat in 0...Int(clip.lengthBeats.rounded(.up)) {
+                            let x = CGFloat(beat) * pxPerBeat
+                            var line = Path()
+                            line.move(to: CGPoint(x: x, y: 0))
+                            line.addLine(to: CGPoint(x: x, y: size.height))
+                            context.stroke(line, with: .color(.secondary.opacity(0.12)), lineWidth: 0.5)
+                        }
+                        guard !points.isEmpty else { return }
+                        var curve = Path()
+                        for (index, point) in points.enumerated() {
+                            let localBeat = point.beat - clip.startBeat
+                            let x = CGFloat(max(0, min(clip.lengthBeats, localBeat))) * pxPerBeat
+                            let y = (1 - CGFloat((point.value + 1) / 2)) * size.height
+                            if index == 0 { curve.move(to: CGPoint(x: x, y: y)) }
+                            else { curve.addLine(to: CGPoint(x: x, y: y)) }
+                        }
+                        context.stroke(curve, with: .color(.accentColor), lineWidth: 2)
+                    }
+                    ForEach(Array(points.enumerated()), id: \.offset) { _, point in
+                        let localBeat = point.beat - clip.startBeat
+                        let x = CGFloat(max(0, min(clip.lengthBeats, localBeat))) * pxPerBeat
+                        let y = (1 - CGFloat((point.value + 1) / 2)) * laneHeight
+                        Circle().fill(Color.accentColor).frame(width: 7, height: 7)
+                            .offset(x: x - 3.5, y: y - 3.5)
+                    }
+                }
+                .frame(width: width, height: laneHeight)
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 0).onChanged { value in
+                        guard let track else { return }
+                        let localBeat = max(0, min(clip.lengthBeats, Double(value.location.x / pxPerBeat)))
+                        let bend = max(-1, min(1, 1 - (Double(value.location.y / laneHeight) * 2)))
+                        let target = pitchBendLaneForEditing(track: track, channel: channel)
+                        replacePitchBendPoint(in: target, beat: clip.startBeat + localBeat, value: bend)
+                    }
+                )
+                .contextMenu {
+                    Button("Clear Pitch Bend Automation", role: .destructive) {
+                        lane?.points.removeAll()
+                    }
+                }
+            }
+        }
+        .frame(height: laneHeight)
+        .help("Drag to draw channel-1 pitch bend. Incoming 14-bit bend is recorded while Record or MIDI Overdub is active.")
+    }
+
+    private func pitchBendLaneForEditing(track: Track, channel: Int) -> AutomationLane {
+        let paramID = AutomationSpecialParam.midiPitchBend(channel: channel)
+        if let lane = track.automationLanes.first(where: {
+            $0.nodeID == "instrument" && $0.paramID == paramID
+        }) { return lane }
+        let lane = AutomationLane(nodeID: "instrument", paramID: paramID)
+        track.automationLanes.append(lane)
+        return lane
+    }
+
+    private func replacePitchBendPoint(in lane: AutomationLane, beat: Double, value: Double) {
+        let quantizedBeat = (beat * 64).rounded() / 64
+        if let index = lane.points.indices.min(by: {
+            abs(lane.points[$0].beat - quantizedBeat) < abs(lane.points[$1].beat - quantizedBeat)
+        }), abs(lane.points[index].beat - quantizedBeat) <= (1.0 / 32.0) {
+            lane.points[index] = AutomationPoint(beat: quantizedBeat, value: value)
+        } else {
+            lane.points.append(AutomationPoint(beat: quantizedBeat, value: value))
+        }
+        lane.points.sort { $0.beat < $1.beat }
     }
 
     private func fitNotesToScale(in clip: Clip) {
