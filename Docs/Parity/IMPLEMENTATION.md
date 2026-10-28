@@ -165,3 +165,10 @@ random-excitation handling and the remaining sound/native-graph gates.
 statements. Original sources/effects, portable sample layers, warp and worker-side
 session processing are implemented. Full live transport/hardware, external-hosting,
 VoxGarden and release acceptance remain open; the ledger states the exact boundary.
+
+## Native input recording slice
+
+[NATIVE_RECORDING.md](NATIVE_RECORDING.md) records event-driven WASAPI capture,
+recoverable dry takes, native input diagnostics and Qt/project integration.
+Capture-only recording now works in source; synchronized duplex transport,
+monitoring, streaming output and hardware validation remain separate gates.

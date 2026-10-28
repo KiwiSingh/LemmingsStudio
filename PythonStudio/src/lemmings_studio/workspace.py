@@ -3,15 +3,18 @@ from copy import deepcopy
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Event
-import json,math,os,time
+import json,math,os,time,sys
 from PySide6.QtCore import QObject,Signal,Slot,Property,QUrl,QTimer
 from PySide6.QtGui import QImage
 from PySide6.QtQml import QQmlApplicationEngine
-from PySide6.QtWidgets import QApplication,QFileDialog,QMessageBox
+from PySide6.QtWidgets import QApplication,QFileDialog,QMessageBox,QInputDialog
 from .workspace_document import WorkspaceDocument,identity,numeric
 from .project_contract import ProjectFile
 from .workspace_audio import REFERENCE,Snapshot,WorkspaceRenderer
 from .audio import AudioEngine
+from .recording import DryRecorder,take_clip,recording_folder
+from .native_capture import input_devices
+from .workspace_audio import library_path
 from .stock_contract import ANALOG_DEVICES,BUILTIN_DEVICES,EFFECT_FAMILIES,MIDI_DEVICES,RACK_DEVICES,STEP_KINDS,DRUM_LANES
 
 WORKSPACES=['Session','Arrangement','Piano Roll','Step Sequencer','Devices','Automation','Mixer']
@@ -28,6 +31,8 @@ class WorkspaceController(QObject):
     completed=Signal(object)
     position=Signal(int,float)
     audioFinished=Signal(int,str)
+    recordingProgress=Signal(object)
+    recordingFinished=Signal(object)
 
     def __init__(self,data=None,persist_preferences=True):
         super().__init__()
@@ -41,20 +46,25 @@ class WorkspaceController(QObject):
         self.jobs=ThreadPoolExecutor(max_workers=1,thread_name_prefix='LemmingsWorkspace')
         self.completed.connect(self._complete)
         self.engine=AudioEngine()
+        self.recorder=DryRecorder();self.record_state='idle';self.record_seconds=0.;self.input_peak=0.
+        self.input_endpoint='';self.input_name='Windows default recording device'
+        self.recorder.on_progress=self.recordingProgress.emit;self.recorder.on_finished=self.recordingFinished.emit
+        self.recordingProgress.connect(self._recording_progress);self.recordingFinished.connect(self._recording_finished)
         self.render_update=QTimer(self);self.render_update.setSingleShot(True);self.render_update.setInterval(120);self.render_update.timeout.connect(self.refresh_playback)
         self.engine.on_position=self.position.emit;self.engine.on_finished=self.audioFinished.emit
         self.position.connect(self._position);self.audioFinished.connect(self._audio_finished)
-        self.settings_path=Path(os.environ.get('LEMMINGS_DIAGNOSTICS_DIR',str(Path(__file__).resolve().parents[3]/'.local'))).parent/'workspace-settings.json'
+        self.settings_path=recording_folder().parent/'workspace-settings.json'
         try:
             settings=json.loads(self.settings_path.read_text(encoding='utf-8'))
             if settings.get('theme') in [t['name'] for t in REFERENCE['themes']]: self.theme=settings['theme']
             if settings.get('workspace') in WORKSPACES:self.workspace=settings['workspace']
+            self.input_endpoint=str(settings.get('inputEndpoint',''));self.input_name=str(settings.get('inputName','Windows default recording device'))
         except (OSError,ValueError): pass
 
     def save_preferences(self):
         if self.persist_preferences:
             self.settings_path.parent.mkdir(parents=True,exist_ok=True)
-            self.settings_path.write_text(json.dumps({'theme':self.theme,'workspace':self.workspace}),encoding='utf-8')
+            self.settings_path.write_text(json.dumps({'theme':self.theme,'workspace':self.workspace,'inputEndpoint':self.input_endpoint,'inputName':self.input_name}),encoding='utf-8')
 
     def _emit_changed(self):
         # QML notify consumers can run before ordinary signal-connected Python
@@ -144,6 +154,7 @@ class WorkspaceController(QObject):
                 'note':next((n for n in clip.get('notes',[]) if n['id']==self.note_id),{}),'selectedTracks':self.selected_tracks,'workspace':self.workspace,'workspaces':WORKSPACES,
                 'browser':self.browser,'browserTabs':BROWSER,'dock':self.dock,'dockTabs':DOCK,
                 'detail':self.detail,'status':self.status,'busy':self.pending>0,
+                'recordState':self.record_state,'recordSeconds':self.record_seconds,'inputPeak':self.input_peak,'inputName':self.input_name,'nativeInputAvailable':sys.platform=='win32',
                 'canUndo':bool(self.document.undo_stack),'canRedo':bool(self.document.redo_stack),
                 'themes':[t['name'] for t in REFERENCE['themes']],'theme':self.theme,
                 'glyph':next(t['glyph'] for t in REFERENCE['themes'] if t['name']==self.theme),
@@ -163,6 +174,8 @@ class WorkspaceController(QObject):
         except Exception as error: self.message(str(error))
 
     def _command(self,name,a):
+        if self.record_state!='idle' and name not in ('stop','record','workspace','browser','dock','detail','search','theme','selectTrack','selectClip','selectNote'):
+            raise ValueError('Stop recording and wait for the take to finish before editing the session')
         tid=a.get('track',self.track_id);cid=a.get('clip',self.clip_id)
         if name=='workspace': self.workspace=a['value'] if a['value'] in WORKSPACES else self.workspace;self.save_preferences()
         elif name=='browser': self.browser=a['value'] if a['value'] in BROWSER else self.browser
@@ -312,6 +325,10 @@ class WorkspaceController(QObject):
             if self.engine.running:self.stop()
             else:self.play()
         elif name=='stop': self.stop()
+        elif name=='record':
+            if self.record_state!='idle':self.stop()
+            else:self.record()
+        elif name=='inputDevice':self.choose_input()
         elif name=='return': self.stop();self.beat=0.;self.transportChanged.emit()
         elif name=='seek': self.stop();self.beat=numeric(a['beat'],0,1e6);self.transportChanged.emit()
         elif name=='launchClip':
@@ -328,13 +345,14 @@ class WorkspaceController(QObject):
         elif name=='open': self.open_project()
         elif name=='save': self.save_project(a.get('asNew',False))
         elif name=='importAudio': self.import_audio()
+        elif name=='recoverRecording':self.import_audio(recording_folder())
         elif name=='export': self.export_audio()
         elif name=='metronome':self.metronome=not self.metronome
         elif name=='freeze':self.freeze_track(tid)
         elif name=='unfreeze':self.document.edit('Unfreeze track',lambda d:WorkspaceDocument.track(d,tid).update(frozen=False,bounced=None))
         elif name=='cancel': self.cancel.set();self.status='Cancelling…'
         else: raise ValueError('This capability awaits its Windows engine/integration port')
-        if name not in ('undo','redo','tap','cancel','open','save','importAudio','export'):self.status=name[0].upper()+name[1:]
+        if name not in ('undo','redo','tap','cancel','open','save','importAudio','recoverRecording','export','record','inputDevice','stop'):self.status=name[0].upper()+name[1:]
 
     def audition(self,pitch):
         if self.track()['kind']=='Audio (Recorded)':raise ValueError('Select an instrument track to audition')
@@ -391,6 +409,8 @@ class WorkspaceController(QObject):
         self.notify()
 
     def confirm_discard(self):
+        if self.record_state!='idle':
+            self.stop();self.message('Finishing the recording; wait for the take before closing or changing projects');return False
         if not self.document.dirty:return True
         answer=QMessageBox.question(None,'Unsaved project','Save your changes before continuing?',QMessageBox.StandardButton.Save|QMessageBox.StandardButton.Discard|QMessageBox.StandardButton.Cancel)
         if answer==QMessageBox.StandardButton.Save:
@@ -430,8 +450,8 @@ class WorkspaceController(QObject):
             self.document.saved=deepcopy(result);self.path=path;self.status='Saved '+path.name
         self.submit('Saving…',write,saved)
 
-    def import_audio(self):
-        name,_=QFileDialog.getOpenFileName(None,'Import audio','','Audio (*.wav *.aif *.aiff *.flac *.ogg)')
+    def import_audio(self,folder=None):
+        name,_=QFileDialog.getOpenFileName(None,'Recover retained recording' if folder else 'Import audio',str(folder or ''),'Audio (*.wav *.aif *.aiff *.flac *.ogg)')
         if not name:return
         epoch=self.epoch
         def read():
@@ -486,7 +506,66 @@ class WorkspaceController(QObject):
         self.engine.play(Snapshot(deepcopy(self.document.data),self.master_gain,scope,0.,self.metronome),self.path.parent if self.path else Path.cwd(),self.beat,renderer_factory=WorkspaceRenderer)
         self.transportChanged.emit()
 
-    def stop(self):self.engine.stop();self.transportChanged.emit()
+    def stop(self):
+        self.engine.stop()
+        if self.record_state in ('opening','recording'):
+            self.record_state='finishing';self.recorder.stop();self.status='Finishing recorded take…';self._emit_changed()
+        self.transportChanged.emit()
+
+    def choose_input(self):
+        if sys.platform!='win32':raise ValueError('Native Windows input is available in the Windows build')
+        def selected(devices):
+            labels=[f"{i+1}. {d['name']}" for i,d in enumerate(devices)]
+            choice,ok=QInputDialog.getItem(None,'Recording input','Choose a Windows recording device',labels,0,False)
+            if ok:
+                device=devices[labels.index(choice)];self.input_endpoint=device['id'];self.input_name=device['name'];self.save_preferences();self.status='Input: '+self.input_name
+        self.submit('Finding Windows input devices…',lambda:input_devices(library_path()),selected)
+
+    def record(self):
+        if sys.platform!='win32':raise ValueError('Native Windows recording must be run in the Windows build')
+        if self.pending:raise ValueError('Wait for the current file operation before recording')
+        track=self.track()
+        if track['kind']!='Audio (Recorded)' or not track.get('armed'):
+            raise ValueError('Select an Audio (Recorded) track and enable Arm before recording')
+        if track.get('frozen'):raise ValueError('Unfreeze the track before recording')
+        self.engine.stop();self.render_update.stop()
+        context={'trackID':track['id'],'epoch':self.epoch,'startBeat':self.beat,'bpm':self.document.data['bpm']}
+        self.record_state='opening';self.record_seconds=0.;self.input_peak=0.
+        self.status='Opening '+self.input_name+' · dry capture; monitoring and overdubbing are not enabled'
+        try:self.recorder.start(library_path(),self.input_endpoint,context)
+        except Exception:
+            self.record_state='idle';raise
+        self._emit_changed();self.transportChanged.emit()
+
+    @Slot(object)
+    def _recording_progress(self,info):
+        if self.record_state=='idle':return
+        if self.record_state=='opening':
+            self.record_state='recording';self.status='Recording dry input · '+self.input_name+' · Stop to insert the take'
+        self.record_seconds=info['seconds'];self.input_peak=info['native']['peak'];self._emit_changed()
+
+    @Slot(object)
+    def _recording_finished(self,result):
+        info=result['take'];self.input_peak=0.
+        if result['error']:
+            self.record_state='idle';self.message(result['error']);return
+        self.record_state='finishing'
+        def prepare():
+            try:return take_clip(info),None
+            except Exception as error:return None,str(error)
+        def insert(prepared):
+            self.record_state='idle';clip,error=prepared
+            if error:self.message(f"Recording retained at {info['path']}: {error}");return
+            if info['epoch']!=self.epoch or not any(t['id']==info['trackID'] for t in self.document.data['tracks']):
+                self.message('Session changed; recording retained at '+info['path']);return
+            def commit(data):
+                track=WorkspaceDocument.track(data,info['trackID']);track['audioClips'].append(clip)
+                end=info['startBeat']+info['frames']/info['rate']*info['bpm']/60
+                data['lengthBars']=max(data['lengthBars'],math.ceil(end/data['beatsPerBar']))
+            self.document.edit('Record audio',commit);self.track_id=info['trackID'];self.clip_id=clip['id']
+            self.record_seconds=info['frames']/info['rate']
+            self.status=f"Recorded {self.record_seconds:.2f} s · dry source retained"+(' · ten-minute take limit reached' if info.get('limitReached') else '')
+        self.submit('Preparing recorded take…',prepare,insert)
 
     @Slot(int,float)
     def _position(self,generation,beat):

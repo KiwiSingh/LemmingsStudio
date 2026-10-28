@@ -106,3 +106,7 @@ and Swift fixture variables plus `LEMMINGS_SWIFT_EFFECT_REFERENCE` (`effect-refe
 `LEMMINGS_SWIFT_WARP_REFERENCE` (`warp-reference`) and existing drum-reference path.
 Run the complete Python suite and installed-app startup check. CI repeats these
 comparisons on Windows. All local environments, caches and evidence stay external.
+
+The subsequent [native recording slice](NATIVE_RECORDING.md) adds capture-only
+WASAPI input and dry-take recovery. It does not replace the playback preparation
+path described above or establish synchronized overdubbing/hardware latency.

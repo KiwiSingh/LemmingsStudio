@@ -70,6 +70,26 @@ def verify(window,output):
         actual=render_effect(native_engine,kind,signal,48000)
         assert actual.shape==signal.shape and np.isfinite(actual).all(),kind
     checks['all_stock_effect_binaries']=len(EFFECT_FAMILIES)
+    # Exercise the installed input ABI and dry-file path without requiring or
+    # opening a CI user's microphone. Hardware acceptance is a separate gate.
+    from .native_capture import NativeCapture
+    from .recording import DryRecorder,take_clip
+    from threading import Event
+    import ctypes as C
+    class Capture(NativeCapture):
+        def __init__(self,path,endpoint):
+            super().__init__(path,test_format=(48000,2,48000))
+            assert self.lib.ls_capture_test_push(self.handle,signal.ctypes.data_as(C.POINTER(C.c_float)),len(signal),0)==0
+    done=Event();results=[];recorder=DryRecorder()
+    recorder.on_finished=lambda result:(results.append(result),done.set())
+    recorder.start(library_path(),'',{'startBeat':0.,'bpm':124.},output/'recording',capture_factory=Capture,max_seconds=len(signal)/48000)
+    assert done.wait(10),'Native recording disk worker timed out'
+    recorder.thread.join();assert results[0]['error'] is None,results[0]['error']
+    clip=take_clip(results[0]['take']);np.testing.assert_array_equal(clip['samples'],signal.mean(axis=1))
+    recording=deepcopy(original);recording['tracks'][-1]['audioClips']=[clip]
+    ProjectFile(recording).save(output/'recorded-take.lemmingsproject')
+    assert ProjectFile.load(output/'recorded-take.lemmingsproject').data==recording
+    checks['native_input_ring_disk_take_and_project_reopen']=True
     checks.update(seven_workspaces_two_sizes=True,eleven_original_palettes=True,native_drum_render=True,
                   qml_errors_absent=not window.warnings)
     if window.warnings:raise RuntimeError('\n'.join(window.warnings))
