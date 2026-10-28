@@ -1,0 +1,16 @@
+{
+  "armed_midi_source_recording" : true,
+  "audio_arm_input_selection" : true,
+  "format" : "VST3",
+  "insert_peak" : 0.28331702947616577,
+  "native_editor_open_reopen" : true,
+  "neutron_path" : "\/Volumes\/Zweidrive\/Audio-Plugins\/system\/VST3\/Neutron 5.vst3",
+  "one_shot_replacement_audio" : true,
+  "physical_audio_device_tested" : false,
+  "piano_roll_actual_keyboard_shortcuts" : true,
+  "plugin_project_state" : true,
+  "serum_path" : "\/Volumes\/Zweidrive\/Audio-Plugins\/system\/VST3\/Serum2.vst3",
+  "source_peak" : 0.28331702947616577,
+  "status" : "passed",
+  "vst3_state_round_trip" : true
+}
