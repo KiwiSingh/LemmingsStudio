@@ -172,3 +172,19 @@ VoxGarden and release acceptance remain open; the ledger states the exact bounda
 recoverable dry takes, native input diagnostics and Qt/project integration.
 Capture-only recording now works in source; synchronized duplex transport,
 monitoring, streaming output and hardware validation remain separate gates.
+
+## Local Mac bundle — 29 October 2026
+
+The fresh local Swift bundle uses a snapshot of the existing local Mac work plus
+the paired document fixes; originals and main are preserved. The duration prompt
+compile error is fixed by using AudioClip.arrangementLengthBeats(projectTempo:).
+Build artifacts and exact source hashes are on Zweidrive in
+Artifacts/mac-fresh-20261029. This supersedes the earlier local compile-blocker
+observation; it is not full hardware/release acceptance.
+
+The installed working VoxGarden VST3 is copied privately into Contents/PlugIns;
+the Mac scanner includes that directory and classifies VoxGarden as an effect.
+The existing Carla path opens VST3 editors. This is private packaging/discovery,
+not a declaration that native in-track VST3 processing, latency compensation or
+VoxGarden project-state integration is complete. No shared DAW plugin installer
+or upstream repository change is introduced.
