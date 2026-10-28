@@ -5699,7 +5699,7 @@ private struct UserLibraryFileCandidate: Sendable {
         let tempoHint = clip.detectedTempo.map { "Detected tempo: \(Int($0)) BPM." } ?? "Tempo unknown."
         let prompt = """
         Replicate the sonic signature of the reference audio clip “\(clip.displayName)” on \(target.displayName).
-        \(tempoHint) Clip length: \(String(format: "%.2f", clip.lengthBeats)) beats.
+        \(tempoHint) Clip length: \(String(format: "%.2f", clip.arrangementLengthBeats(projectTempo: project.tempo))) beats.
 
         Recreate the perceived timbre, envelope, brightness, harmonic density, stereo character, transient shape,
         movement, and FX character as closely as the available target allows. Set every parameter you can actually

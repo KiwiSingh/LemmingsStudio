@@ -240,7 +240,7 @@ extension DeviceKind {
 
 
 @Observable public final class DeviceModel: Identifiable {
-    public let id = UUID()
+    public internal(set) var id = UUID()
     public var kind: DeviceKind
     public var bypassed = false
     public var mono = false              // engine pre-collapses to mono before this device

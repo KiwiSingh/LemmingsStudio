@@ -1,0 +1,24 @@
+LemmingsStudio Windows Python Preview
+
+This is an experimental Windows build. The macOS application remains Swift.
+
+This setup installs for the current Windows user, with Start menu shortcuts and
+an optional desktop shortcut. Python and the required native libraries are bundled.
+It installs separately from existing LemmingsStudio applications and does not
+change file associations, projects, presets, models or external DAW settings.
+
+The Qt Quick workspace includes all seven pages, shared-project and MIDI editing,
+a sequencer using original Mac drum voices, mixer controls,
+playback, and WAV export. It is not yet equivalent to the macOS application's
+full feature set. Recording, plugin hosting, routing, effects and AI workflows
+are still being ported. Existing project formats are not silently converted.
+
+Use .lemmingsproject for projects made in this branch. Keep the existing builds and
+original projects while the new Windows implementation is validated.
+
+License notices are bundled with the libraries. Source/ contains matching source
+and dependency metadata. The uninstaller removes installed files and shortcuts;
+it does not recursively delete user-created projects or other files.
+
+This is an unsigned internal preview. Hardware audio, full project compatibility
+and distribution licensing review remain release gates.

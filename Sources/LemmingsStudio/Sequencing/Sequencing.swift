@@ -5,7 +5,7 @@ import SwiftUI
 // MARK: - Notes & clips
 
 public struct ClipNote: Identifiable, Hashable {
-    public let id = UUID()
+    public internal(set) var id = UUID()
     public var pitch: Int        // MIDI number
     public var start: Double     // beats from clip start
     public var length: Double    // beats
@@ -16,7 +16,7 @@ public struct ClipNote: Identifiable, Hashable {
 }
 
 @Observable public final class Clip: Identifiable {
-    public let id = UUID()
+    public internal(set) var id = UUID()
     public var name: String
     public var isActive: Bool = true
     public var startBeat: Double        // position on the arrangement timeline
@@ -36,7 +36,7 @@ public struct ClipNote: Identifiable, Hashable {
 
 // MARK: - Step sequencer (FL-style)
 
-public struct Step: Hashable {
+public struct Step: Hashable, Codable {
     /// Back-compat primary flag/note. The beta sequencer now supports several
     /// row hits on the same time cell, so kick+hat+snare overlaps are legal.
     public var on: Bool = false
@@ -139,7 +139,7 @@ public struct Step: Hashable {
 // MARK: - Mixer routing: sends, returns, buses, groups
 
 public struct SendSlot: Identifiable, Hashable, Sendable {
-    public let id = UUID()
+    public internal(set) var id = UUID()
     public var returnBusID: UUID
     public var amount: Float
     public var preFader: Bool
@@ -217,13 +217,15 @@ public enum SequencerLayerSource: String, CaseIterable, Identifiable, Sendable {
 }
 
 public struct SequencerLayer: Identifiable, Hashable, Sendable {
-    public let id = UUID()
+    public internal(set) var id = UUID()
     public var name: String
     public var source: SequencerLayerSource
     public var note: Int
     public var steps: [Bool]
     public var velocity: Float
-    public var samplePath: String?
+    public var samplePath: String? { didSet { embeddedSamples = nil } }
+    /// Portable one-shot payload; the original path remains provenance.
+    public var embeddedSamples: [Float]? = nil
     public var pluginTargetID: String?
     /// Per-lane performance controls. `note` remains the lane/cell identity,
     /// while plug-in lanes can play the project root note plus this octave.
@@ -261,7 +263,7 @@ public struct SequencerLayer: Identifiable, Hashable, Sendable {
         // One-shot sample lanes are also keyed by their lane note in the sample
         // layer instrument. Until real per-lane sample pitch shifting exists,
         // do not transpose the routing note or the sample layer will be missed.
-        if source == .splice || samplePath != nil {
+        if source == .splice || samplePath != nil || embeddedSamples != nil {
             return max(0, min(127, note))
         }
 
@@ -321,7 +323,7 @@ public struct SequencerLayer: Identifiable, Hashable, Sendable {
 
 
 public struct ExternalPluginSlot: Identifiable, Hashable, Sendable {
-    public let id = UUID()
+    public internal(set) var id = UUID()
     public var pluginID: String
     public var name: String
     public var format: PluginFormat
@@ -370,7 +372,7 @@ public enum AudioInputMonitorMode: String, Codable, CaseIterable, Identifiable {
 }
 
 @Observable public final class Track: Identifiable {
-    public let id = UUID()
+    public internal(set) var id = UUID()
     public var name: String
     public var kind: InstrumentKind
     public var clips: [Clip] = []
@@ -450,7 +452,7 @@ public enum AudioInputMonitorMode: String, Codable, CaseIterable, Identifiable {
 /// track.audioClips) forces the arrangement to re-read the clip. Observability makes
 /// the take's waveform and length appear the instant it's committed.
 @Observable public final class AudioClip: Identifiable {
-    public let id = UUID()
+    public internal(set) var id = UUID()
     public var startBeat: Double
     public var isActive: Bool = true
     public var samples: [Float]
@@ -549,6 +551,8 @@ public enum ProjectBitDepth: String, CaseIterable, Identifiable, Sendable {
 // MARK: - Project
 
 @Observable public final class Project {
+    // Original portable document is retained only for lossless unknown-field merging.
+    public var documentSourceJSON: Data? = nil
     public var name = "Untitled"
     public var tempo: Double = 124
     public var swingAmount: Double = 0

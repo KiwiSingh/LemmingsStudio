@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools==80.9.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lemmings-studio-windows"
+version = "0.1.0.dev0"
+description = "Isolated Windows Python rewrite of LemmingsStudio"
+requires-python = ">=3.13,<3.14"
+license = "GPL-3.0-only"
+dependencies = ["PySide6-Essentials==6.12.0", "PySide6-Addons==6.12.0", "numpy==2.3.5", "soundfile==0.13.1", "sounddevice==0.5.6"]
+
+[project.optional-dependencies]
+test = ["pytest==9.0.2"]
+
+[project.gui-scripts]
+lemmings-studio-windows = "lemmings_studio.bootstrap:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.setuptools.package-data]
+lemmings_studio = ["qml/*.qml", "qml/*.json"]

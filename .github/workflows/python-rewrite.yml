@@ -1,0 +1,105 @@
+name: Windows Python rewrite
+on:
+  push:
+    branches: ['rewrite/python-windows']
+    paths: ['PythonStudio/**', 'Docs/PythonRewrite/**', 'Docs/Parity/**', 'Sources/LemmingsStudio/Resources/**', 'tools/stage_startup_resources.py', '.github/workflows/python-rewrite.yml']
+  pull_request:
+    paths: ['PythonStudio/**', 'Docs/PythonRewrite/**', 'Docs/Parity/**', 'Sources/LemmingsStudio/Resources/**', 'tools/stage_startup_resources.py', '.github/workflows/python-rewrite.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows-preview:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+      - name: Redirect build caches to the runner temporary directory
+        shell: pwsh
+        run: |
+          "PIP_CACHE_DIR=$env:RUNNER_TEMP/pip-cache" >> $env:GITHUB_ENV
+          "PYINSTALLER_CONFIG_DIR=$env:RUNNER_TEMP/pyinstaller-cache" >> $env:GITHUB_ENV
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          architecture: 'x64'
+      - name: Install the isolated Windows application and checks
+        run: python -m pip install -c PythonStudio/requirements-lock.txt -e "./PythonStudio[test]" pyinstaller==6.22.3
+      - name: Document integrity, rendering and workspace checks
+        run: python -m pytest PythonStudio/tests -q --junitxml=python-test-results.xml
+      - name: Check actual desktop workspace sizes before packaging
+        shell: pwsh
+        run: |
+          $native="$env:RUNNER_TEMP/python-preview/native-audio"
+          cmake -S PythonStudio/native -B $native -A x64
+          if ($LASTEXITCODE -ne 0) { throw 'Native configure failed' }
+          cmake --build $native --config Release
+          if ($LASTEXITCODE -ne 0) { throw 'Native build failed' }
+          $env:QT_QPA_PLATFORM='windows'
+          $env:LEMMINGS_NATIVE_LIBRARY="$native/Release/lemmings_audio.dll"
+          $env:LEMMINGS_DIAGNOSTICS_DIR="$env:RUNNER_TEMP/source-workspace/diagnostics"
+          python -m lemmings_studio --software-rendering --startup-check-report "$env:RUNNER_TEMP/source-workspace/startup-check.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Actual desktop workspace check failed' }
+      - name: Build and smoke-test the standalone Windows preview
+        shell: pwsh
+        run: ./PythonStudio/build-windows.ps1 -OutputRoot "$env:RUNNER_TEMP/python-preview"
+      - name: Include matching source and migration evidence
+        shell: pwsh
+        run: |
+          $output = "$env:RUNNER_TEMP/python-preview/application"
+          git archive --format=zip "--output=$output/Matching-Source.zip" HEAD PythonStudio Docs/PythonRewrite Docs/Parity Sources/LemmingsStudio/Resources tools/stage_startup_resources.py .github/workflows/python-rewrite.yml LICENSE THIRD_PARTY_NOTICES.md
+          if ($LASTEXITCODE -ne 0) { throw 'Source archive failed.' }
+          Copy-Item "$env:RUNNER_TEMP/python-preview/bundle-smoke.json" $output
+          Copy-Item "$env:RUNNER_TEMP/python-preview/startup-check.json" $output
+          Copy-Item Docs/PythonRewrite/dependencies.json "$output/dependency-license-metadata.json"
+          $sha = git rev-parse HEAD
+          @{ commit=$sha; target='Windows x64'; macOSProduct='unchanged Swift application'; releaseStatus='experimental; full parity and distribution audit pending' } | ConvertTo-Json | Set-Content "$output/build-manifest.json"
+      - name: Build the per-user setup wizard
+        shell: pwsh
+        run: |
+          choco install innosetup --version=6.5.4 --allow-downgrade --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { throw 'Setup compiler installation failed.' }
+          $extra = "$env:RUNNER_TEMP/python-preview/application"
+          Copy-Item PythonStudio/installer/Preview-Information.txt $extra
+          $bundle = "$extra/LemmingsStudio Windows Preview"
+          $output = "$env:RUNNER_TEMP/python-preview/setup"
+          & "${env:ProgramFiles(x86)}/Inno Setup 6/ISCC.exe" "/DBundleRoot=$bundle" "/DExtraRoot=$extra" "/DOutputRoot=$output" "/DBuildVersion=0.1.0.${{ github.run_number }}" PythonStudio/installer/setup.iss
+          if ($LASTEXITCODE -ne 0) { throw 'Setup compilation failed.' }
+      - name: Verify setup, installed application, reinstall and uninstall
+        shell: pwsh
+        run: |
+          $setup = @(Get-ChildItem "$env:RUNNER_TEMP/python-preview/setup" -Filter '*.exe')
+          if ($setup.Count -ne 1) { throw 'Expected one setup executable.' }
+          ./PythonStudio/installer/test-setup.ps1 -Installer $setup[0].FullName -TestRoot "$env:RUNNER_TEMP/python-preview/lifecycle"
+          Get-FileHash $setup[0].FullName -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLowerInvariant())  $([IO.Path]::GetFileName($_.Path))" } | Set-Content "$env:RUNNER_TEMP/python-preview/setup/SHA256SUMS.txt" -Encoding ascii
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LemmingsStudio-Windows-Python-Setup
+          path: ${{ runner.temp }}/python-preview/setup/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LemmingsStudio-Windows-Python-Preview
+          path: ${{ runner.temp }}/python-preview/application/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Windows-Python-validation
+          path: |
+            python-test-results.xml
+            ${{ runner.temp }}/source-workspace/
+            ${{ runner.temp }}/python-preview/bundle-smoke.json
+            ${{ runner.temp }}/python-preview/startup-check.json
+            ${{ runner.temp }}/python-preview/workspace-evidence/
+            ${{ runner.temp }}/python-preview/launch-diagnostics/launch-*.log
+            ${{ runner.temp }}/python-preview/launch-diagnostics/*-video.png
+            ${{ runner.temp }}/python-preview/launch-diagnostics/*-splash.png
+            ${{ runner.temp }}/python-preview/lifecycle/*.json
+            ${{ runner.temp }}/python-preview/lifecycle/workspace-evidence/
+            ${{ runner.temp }}/python-preview/lifecycle/launch-diagnostics/*.png
+            ${{ runner.temp }}/python-preview/lifecycle/launch-diagnostics/*.log
+            ${{ runner.temp }}/python-preview/lifecycle/*.log
+          if-no-files-found: ignore

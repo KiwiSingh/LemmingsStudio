@@ -460,6 +460,7 @@ public enum PluginDragPasteboard {
 
 public enum PluginScanner {
     public static let defaultSearchPaths = [
+        Bundle.main.builtInPlugInsURL?.path ?? Bundle.main.bundleURL.appendingPathComponent("Contents/PlugIns").path,
         "/Library/Audio/Plug-Ins/Components",
         "~/Library/Audio/Plug-Ins/Components",
         "/Library/Audio/Plug-Ins/VST3",
@@ -511,6 +512,7 @@ public enum PluginScanner {
     }
 
     public static func classifyPluginRole(name: String, path: String? = nil) -> PluginRole {
+        if name.caseInsensitiveCompare("VoxGarden") == .orderedSame { return .effect }
         let lower = ([name, path ?? ""].joined(separator: " ")).lowercased()
         let instrumentHints = ["synth", "serum", "vital", "massive", "omnisphere", "kontakt", "instrument", "piano", "keys", "organ", "bass", "drum", "sampler", "rompler", "fm", "wavetable", "uhe", "diva", "pigments", "spire", "sylenth"]
         let effectHints = ["eq", "compress", "limiter", "reverb", "delay", "echo", "chorus", "flanger", "phaser", "distortion", "saturat", "filter", "gate", "de-esser", "clipper", "shaper", "pan", "widen", "meter", "analyzer", "tuner", "kickstart", "sidechain"]

@@ -185,7 +185,7 @@ public final class SampleLayerDrumKit: Instrument {
         self.sampleRate = sampleRate
         self.base = DrumKit(name: name, genre: genre, sampleRate: sampleRate)
         for layer in sequencerLayers {
-            guard let path = layer.samplePath, let samples = Self.loadMonoSample(path: path, targetSampleRate: sampleRate), !samples.isEmpty else { continue }
+            guard let samples = layer.embeddedSamples ?? layer.samplePath.flatMap({ Self.loadMonoSample(path: $0, targetSampleRate: sampleRate) }), !samples.isEmpty else { continue }
             layers[layer.note] = SampleLayer(note: layer.note, samples: samples, level: layer.velocity)
         }
     }
@@ -261,8 +261,7 @@ public final class SampleLayerHybridInstrument: Instrument {
         self.name = name
         self.base = base
         for layer in sequencerLayers {
-            guard let path = layer.samplePath,
-                  let samples = Self.loadMonoSample(path: path),
+            guard let samples = layer.embeddedSamples ?? layer.samplePath.flatMap({ Self.loadMonoSample(path: $0) }),
                   !samples.isEmpty else { continue }
             layers[layer.note] = SampleLayer(samples: samples, level: layer.velocity)
         }
