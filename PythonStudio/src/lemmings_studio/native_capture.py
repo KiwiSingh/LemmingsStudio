@@ -48,8 +48,11 @@ class NativeCapture:
         self.lib=bind(path)
         self.handle=(self.lib.ls_capture_test_open(*test_format) if test_format else self.lib.ls_capture_open(endpoint.encode('utf-8')))
         if not self.handle:raise RuntimeError('Could not open Windows input. Check the selected device, microphone privacy permission and Windows Audio; the project was preserved.')
-        self.channels=self.info()['channels']
-        self.buffer=np.empty((65536,self.channels),dtype=np.float32)
+        try:
+            self.channels=self.info()['channels']
+            self.buffer=np.empty((65536,self.channels),dtype=np.float32)
+        except BaseException:
+            self.close();raise
     def info(self):
         if not self.handle:raise RuntimeError('Input is closed')
         info=CaptureInfo();self.lib.ls_capture_info(self.handle,C.byref(info));return info.as_dict()

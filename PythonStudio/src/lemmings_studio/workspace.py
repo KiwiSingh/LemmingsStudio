@@ -552,7 +552,7 @@ class WorkspaceController(QObject):
         self.record_state='finishing'
         def prepare():
             try:return take_clip(info),None
-            except Exception as error:return None,str(error)
+            except Exception as error:return None,f'{type(error).__name__}: {error}'
         def insert(prepared):
             self.record_state='idle';clip,error=prepared
             if error:self.message(f"Recording retained at {info['path']}: {error}");return

@@ -259,3 +259,35 @@ def test_disk_worker_drains_large_queued_take_even_after_native_overflow(library
     result=results[0];assert result['error'] and result['take']['native']['dropped']==1
     actual,_=sf.read(result['take']['path'],dtype='float32',always_2d=True)
     np.testing.assert_array_equal(actual,source)
+
+
+def test_empty_exception_is_never_reported_as_a_successful_take(library,tmp_path):
+    done=Event();results=[];recorder=DryRecorder()
+    class Capture(NativeCapture):
+        def __init__(self,path,endpoint):
+            super().__init__(path,test_format=(48000,1,48000));push(self,np.ones((100,1)))
+        def read(self):
+            if hasattr(self,'read_once'):raise RuntimeError()
+            self.read_once=True;return super().read()
+    recorder.on_finished=lambda value:(results.append(value),done.set())
+    recorder.start(library,'',{},tmp_path,capture_factory=Capture)
+    assert done.wait(5);recorder.thread.join()
+    assert results[0]['error']=='RuntimeError: '
+    assert results[0]['take']['state']=='recoverable'
+    assert sf.info(results[0]['take']['path']).frames==100
+
+
+def test_binding_closes_native_input_if_buffer_allocation_fails(library,monkeypatch):
+    closed=[];close=NativeCapture.close
+    def observed(self):closed.append(self.handle);close(self)
+    def exhausted(*args,**kwargs):raise MemoryError()
+    monkeypatch.setattr(NativeCapture,'close',observed);monkeypatch.setattr(np,'empty',exhausted)
+    with pytest.raises(MemoryError):NativeCapture(library,test_format=(48000,1,48000))
+    assert len(closed)==1 and closed[0]
+
+
+def test_oversized_packet_stops_capture_without_reading_source(library):
+    with NativeCapture(library,test_format=(48000,1,8)) as capture:
+        assert push(capture,np.ones((9,1)))==-2
+        assert capture.info()['error']==-2 and capture.info()['dropped']==9
+        assert not len(capture.read())

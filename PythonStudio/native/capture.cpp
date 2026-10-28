@@ -33,11 +33,11 @@ struct LSCapture {
     std::thread thread;
     // Only the native producer writes. Publish after all packet samples are copied.
     int push(const float* data,std::uint32_t frames,std::uint32_t flags) noexcept {
-        if(stop.load() || frames>capacity || (!data && !(flags&1)))return -1;
+        if(stop.load() || (!data && !(flags&1)))return -1;
         if((flags&2) && received.load()>0)discontinuities.fetch_add(1);
         const auto w=write.load(std::memory_order_relaxed),r=read.load(std::memory_order_acquire);
         received.fetch_add(frames);
-        if(frames>capacity-(w-r)) { dropped.fetch_add(frames); error.store(-2);stop.store(true);return -2; }
+        if(frames>capacity || frames>capacity-(w-r)) { dropped.fetch_add(frames); error.store(-2);stop.store(true);return -2; }
         float p=0;
         for(std::uint32_t f=0;f<frames;++f)for(std::uint32_t c=0;c<channels;++c){
             float value=flags&1?0:data[std::size_t(f)*channels+c];
@@ -101,8 +101,9 @@ void capture(LSCapture* p,std::wstring endpoint,std::atomic<int>* ready) noexcep
         try {
             while(!p->stop.load()){
                 auto wait=WaitForSingleObject(event.h,100);
-                if(wait==WAIT_TIMEOUT)continue;
-                if(wait!=WAIT_OBJECT_0)throw E_FAIL;
+                // Probe on a timeout as well: invalidated endpoints may no
+                // longer signal their event after unplug/service shutdown.
+                if(wait!=WAIT_OBJECT_0 && wait!=WAIT_TIMEOUT)throw E_FAIL;
                 UINT32 size=0;check(input->GetNextPacketSize(&size));
                 while(size && !p->stop.load()){
                     BYTE* bytes=nullptr;UINT32 frames=0;DWORD flags=0;

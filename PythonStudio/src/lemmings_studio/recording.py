@@ -65,7 +65,7 @@ class DryRecorder:
                 if stats['discontinuities']:raise RuntimeError(f"Input reported {stats['discontinuities']} discontinuities; inspect the retained take before importing: {path}")
                 info['state']='complete'
             except Exception as failure:
-                error=str(failure);info.update(state='recoverable',error=error)
+                error=f'{type(failure).__name__}: {failure}';info.update(state='recoverable',error=error)
             finally:
                 try:manifest(sidecar,info)
                 except Exception as failure:error=(error or '')+f' Recording metadata could not be saved: {failure}'
