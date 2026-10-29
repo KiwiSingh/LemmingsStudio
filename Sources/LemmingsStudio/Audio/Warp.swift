@@ -25,12 +25,23 @@ public enum WarpEngine {
     }
 
     public static func stretch(_ input: [Float], ratio: Double, mode: WarpMode) -> [Float] {
-        guard input.count > 4096, ratio > 0 else { return input }
-        switch mode {
-        case .beat:       return ola(input, ratio: ratio)
-        case .complex:    return phaseVocoder(input, ratio: ratio, locked: false)
-        case .complexPro: return phaseVocoder(input, ratio: ratio, locked: true)
+        guard !input.isEmpty, ratio.isFinite, ratio > 0 else { return input }
+        let count = max(1, Int((Double(input.count) * ratio).rounded()))
+        if input.count <= 4096 {
+            return (0..<count).map { i in
+                let position = min(Double(input.count - 1), Double(i) / ratio)
+                let index = Int(position), next = min(input.count - 1, index + 1)
+                return input[index] + (input[next] - input[index]) * Float(position - Double(index))
+            }
         }
+        let stretched: [Float]
+        switch mode {
+        case .beat: stretched = ola(input, ratio: ratio)
+        case .complex: stretched = phaseVocoder(input, ratio: ratio, locked: false)
+        case .complexPro: stretched = phaseVocoder(input, ratio: ratio, locked: true)
+        }
+        // Algorithm overlap padding must never become musical loop duration.
+        return Array(stretched.prefix(count)) + Array(repeating: 0, count: max(0, count - stretched.count))
     }
 
     // MARK: OLA (overlap-add granular)

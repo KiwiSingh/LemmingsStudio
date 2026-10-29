@@ -1,0 +1,9 @@
+Testing Quick Look preview with files:
+	/Volumes/Zweidrive/LemmingsStudio/Artifacts/mac-export-grid-20261029/Validation/preview.wav
+	/Volumes/Zweidrive/LemmingsStudio/Artifacts/mac-export-grid-20261029/Validation/preview.flac
+	/Volumes/Zweidrive/LemmingsStudio/Artifacts/mac-export-grid-20261029/Validation/preview.mp3
+	/Volumes/Zweidrive/LemmingsStudio/Artifacts/mac-export-grid-20261029/Validation/preview.m4a
+* /Volumes/Zweidrive/LemmingsStudio/Artifacts/mac-export-grid-20261029/Validation/preview.wav produced a preview with a URL of type com.microsoft.waveform-audio
+* /Volumes/Zweidrive/LemmingsStudio/Artifacts/mac-export-grid-20261029/Validation/preview.flac produced a preview with a URL of type org.xiph.flac
+* /Volumes/Zweidrive/LemmingsStudio/Artifacts/mac-export-grid-20261029/Validation/preview.mp3 produced a preview with a URL of type public.mp3
+* /Volumes/Zweidrive/LemmingsStudio/Artifacts/mac-export-grid-20261029/Validation/preview.m4a produced a preview with a URL of type com.apple.m4a-audio

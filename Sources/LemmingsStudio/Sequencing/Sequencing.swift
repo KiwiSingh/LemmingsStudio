@@ -33,7 +33,73 @@ public struct ClipNote: Identifiable, Hashable {
     public init(name: String, startBeat: Double, lengthBeats: Double,
                 notes: [ClipNote] = [], color: Color = .blue) {
         self.name = name; self.startBeat = startBeat; self.lengthBeats = lengthBeats
-        self.notes = notes; self.color = color
+        self.notes = notes; self.color = color; self.loopLengthBeats = max(0.03125, lengthBeats)
+    }
+}
+
+extension Clip {
+    /// Repair legacy imports that saved a four-beat default over a longer phrase.
+    /// Existing printed/repeated phrases retain their smaller valid source unit.
+    public func sourceLoopLengthForExtension(fallback: Double) -> Double {
+        let limit = max(0.03125, fallback)
+        let stored = loopLengthBeats
+        guard stored.isFinite, stored > 0.03125, stored <= limit + 0.0001 else { return limit }
+        func repeats(at period: Double) -> Bool {
+            let seed = notes.filter { $0.start < period - 0.00001 }
+            return notes.allSatisfy { note in
+                let start = note.start.truncatingRemainder(dividingBy: period)
+                guard start + note.length <= period + 0.0001 else { return false }
+                return seed.contains { $0.pitch == note.pitch && abs($0.start - start) < 0.0001 && abs($0.length - note.length) < 0.0001 && abs($0.velocity - note.velocity) < 0.0001 }
+            }
+        }
+        if repeats(at: stored) { return stored }
+        var candidate = stored * 2
+        while candidate < limit - 0.0001 {
+            if repeats(at: candidate) { return candidate }
+            candidate += stored
+        }
+        return limit
+    }
+
+    /// Repeat in musical beats; MIDI source-file tempo is informational only.
+    public func repeatNotes(sourceLength: Double, targetLength: Double) {
+        let sourceLength = max(0.03125, sourceLength)
+        let targetLength = max(sourceLength, targetLength)
+        let epsilon = 0.000_001
+        // Treat loop regions as half-open: [offset, offset + sourceLength).
+        // This matches Step Sequencer print/export and prevents a note exactly on
+        // the right edge from being copied as the final note of the previous bar.
+        let seedNotes = self.notes
+            .filter { $0.start >= -epsilon && $0.start < sourceLength - epsilon }
+            .map { note in
+                ClipNote(pitch: note.pitch,
+                         start: max(0, note.start),
+                         length: min(note.length, max(0.03125, sourceLength - max(0, note.start))),
+                         velocity: note.velocity)
+            }
+        guard !seedNotes.isEmpty, targetLength > sourceLength + epsilon else {
+            self.loopLengthBeats = sourceLength
+            return
+        }
+        var out: [ClipNote] = []
+        var offset = 0.0
+        while offset < targetLength - epsilon {
+            let loopEnd = min(targetLength, offset + sourceLength)
+            for note in seedNotes {
+                let start = offset + note.start
+                guard start < loopEnd - epsilon, start < targetLength - epsilon else { continue }
+                let available = min(targetLength - start, loopEnd - start)
+                guard available > epsilon else { continue }
+                // Adjacent loop repeats are half-open. Do not force a minimum
+                // length that crosses the right edge, or the last hat/kick from
+                // one repeat can bleed into the next repeat/print.
+                let maxLength = min(note.length, available)
+                out.append(ClipNote(pitch: note.pitch, start: start, length: max(0.001, maxLength), velocity: note.velocity))
+            }
+            offset += sourceLength
+        }
+        self.notes = out
+        self.loopLengthBeats = sourceLength
     }
 }
 
@@ -511,23 +577,31 @@ public enum AudioInputMonitorMode: String, Codable, CaseIterable, Identifiable {
     public func playbackPreviewSamples(projectTempo: Double, maximumCount: Int = 16_384) -> [Float] {
         let source = activeSamples
         guard !source.isEmpty, activeSampleRate > 0 else { return [] }
-        let tempo = max(20, projectTempo)
-        let secondsPerBeat = 60.0 / tempo
-        let trimIndex = min(source.count, Int(max(0, trimStartBeats) * secondsPerBeat * activeSampleRate * pitchRatio))
-        let outCount = max(1, min(maximumCount, Int(arrangementLengthBeats(projectTempo: tempo) * secondsPerBeat * activeSampleRate)))
-        let available = max(1, source.count - trimIndex)
+        let length = arrangementLengthBeats(projectTempo: projectTempo)
+        let outCount = max(1, min(maximumCount, Int(length * 60 / max(20, projectTempo) * activeSampleRate)))
         var out:[Float]=[]; out.reserveCapacity(outCount)
         for i in 0..<outCount {
-            let raw = Int(Double(i) * Double(available) / Double(outCount) * pitchRatio)
-            let off = loopEnabled ? raw % available : min(available - 1, raw)
-            out.append(source[trimIndex + off] * gainLinear)
+            let beat = Double(i) * length / Double(outCount)
+            let index = playbackSampleIndex(beatOffset: beat, projectTempo: projectTempo)
+            out.append(index >= 0 && index < source.count ? source[index] * gainLinear : 0)
         }
         return out
     }
 
+    /// Musical source duration stays independent of stretcher padding/detection.
     public func naturalLengthBeats(projectTempo: Double) -> Double {
-        let full = (Double(activeSamples.count) / activeSampleRate) * projectTempo / 60.0
+        let tempo = warpEnabled ? originalTempo : projectTempo
+        let full = Double(samples.count) / max(1, sampleRate) * max(20, tempo) / 60
         return max(0.25, full - trimStartBeats)
+    }
+
+    public func playbackSampleIndex(beatOffset: Double, projectTempo: Double) -> Int {
+        var beat = beatOffset
+        if loopEnabled, lengthBeatsOverride != nil, loopLengthBeats.isFinite, loopLengthBeats > 0 {
+            beat = beat.truncatingRemainder(dividingBy: loopLengthBeats)
+        }
+        let seconds = (beat + trimStartBeats) * 60 / max(20, projectTempo)
+        return Int(seconds * activeSampleRate * max(0.03125, min(32, pitchRatio)))
     }
 
     public func arrangementLengthBeats(projectTempo: Double) -> Double {

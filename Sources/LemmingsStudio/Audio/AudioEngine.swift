@@ -487,7 +487,7 @@ public final class AudioEngine {
     }
 
     public func start() {
-        if ProcessInfo.processInfo.arguments.contains("--validate-hosting") {return}
+        if ProcessInfo.processInfo.arguments.contains("--validate-hosting") || ProcessInfo.processInfo.arguments.contains("--validate-export-grid") {return}
         if !avEngine.isRunning {
             avEngine.prepare()
             try? avEngine.start()
@@ -984,13 +984,9 @@ public final class AudioEngine {
         if !accumulate { for i in 0..<frames { L[i] = 0; R[i] = 0 } }
         guard transport.isPlaying else { return }
         let blockTempo = currentTempo(atBeat: beat0)
-        let secPerBeat = 60.0 / max(20.0, blockTempo)
         let src = clip.activeSamples
-        let srcRate = clip.activeSampleRate
-        let clipStartSec = clip.startBeat * secPerBeat
         let clipEndBeat = clip.startBeat + clip.arrangementLengthBeats(projectTempo: blockTempo)
         let gain = clip.gainLinear
-        let pitchRatio = max(0.03125, min(32.0, clip.pitchRatio))
 
         // If the clip has its own insert FX, render the clip into a temporary
         // stereo block first, process that block, then add it to the track bus.
@@ -1004,12 +1000,7 @@ public final class AudioEngine {
             for i in 0..<frames {
                 let beat = beat0 + (Double(i) / sampleRate) * (blockTempo / 60.0)
                 if beat < clip.startBeat || beat >= clipEndBeat { continue }
-                var tSec = beat * secPerBeat - clipStartSec + clip.trimStartBeats * secPerBeat
-                if tSec < 0 { continue }
-                let sourceDuration = Double(max(1, src.count)) / srcRate
-                let pitchedDuration = sourceDuration / pitchRatio
-                if clip.loopEnabled && pitchedDuration > 0 { tSec = tSec.truncatingRemainder(dividingBy: pitchedDuration) }
-                let idx = Int(tSec * srcRate * pitchRatio)
+                let idx = clip.playbackSampleIndex(beatOffset: beat - clip.startBeat, projectTempo: blockTempo)
                 if idx >= 0 && idx < src.count { let sample = src[idx] * gain; clipL[i] += sample; clipR[i] += sample }
             }
             for device in clip.devices where !device.bypassed {
@@ -1031,12 +1022,7 @@ public final class AudioEngine {
         for i in 0..<frames {
             let beat = beat0 + (Double(i) / sampleRate) * (blockTempo / 60.0)
             if beat < clip.startBeat || beat >= clipEndBeat { continue }
-            var tSec = beat * secPerBeat - clipStartSec + clip.trimStartBeats * secPerBeat
-            if tSec < 0 { continue }
-            let sourceDuration = Double(max(1, src.count)) / srcRate
-            let pitchedDuration = sourceDuration / pitchRatio
-            if clip.loopEnabled && pitchedDuration > 0 { tSec = tSec.truncatingRemainder(dividingBy: pitchedDuration) }
-            let idx = Int(tSec * srcRate * pitchRatio)
+            let idx = clip.playbackSampleIndex(beatOffset: beat - clip.startBeat, projectTempo: blockTempo)
             if idx >= 0 && idx < src.count { let sample = src[idx] * gain; L[i] += sample; R[i] += sample }
         }
     }
@@ -1048,7 +1034,7 @@ public final class AudioEngine {
               let rp = buffers[1].mData?.assumingMemoryBound(to: Float.self) else { return }
 
         for i in 0..<frames { lp[i] = 0; rp[i] = 0 }
-        guard metronomeEnabled else { return }
+        guard !avEngine.isInManualRenderingMode, metronomeEnabled else { return }
 
         let startSample = timestamp.pointee.mSampleTime
         let bpm = max(20.0, transport.isPlaying ? currentTempo(atBeat: transport.wallClockBeat()) : countInClickTempo)

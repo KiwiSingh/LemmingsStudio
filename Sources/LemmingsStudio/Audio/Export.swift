@@ -58,7 +58,6 @@ public final class OfflineRenderer {
     /// Render to in-memory stereo float buffers and report progress/clipping.
     public func renderStereo(project: Project,
                              progress: (@Sendable (Double) -> Void)? = nil,
-                             includeMetronome: Bool = true,
                              forcedPlaybackScope: PlaybackScope? = nil) throws -> (l: [Float], r: [Float], peak: Float, clipped: Bool) {
         let sr = engine.sampleRate
         let total = Int(lengthSeconds(project) * sr) + Int(sr) // +1s tail for reverbs
@@ -69,8 +68,18 @@ public final class OfflineRenderer {
         let savedPlayStartBeat = engine.transport.playStartBeat
         let savedIsPlaying = engine.transport.isPlaying
         av.stop()
-        engine.metronomeEnabled = includeMetronome
+        engine.metronomeEnabled = false
         if let forcedPlaybackScope { engine.playbackScope = forcedPlaybackScope }
+
+        defer {
+            av.stop()
+            av.disableManualRenderingMode()
+            engine.transport.stop(at: savedPlayStartBeat)
+            engine.playbackScope = savedPlaybackScope
+            engine.metronomeEnabled = savedMetronomeEnabled
+            if savedIsPlaying { engine.transport.play() }
+            if wasRunning { try? av.start() }
+        }
 
         guard let format = AVAudioFormat(standardFormatWithSampleRate: sr, channels: 2) else {
             throw ExportError.renderFailed("format")
@@ -93,6 +102,7 @@ public final class OfflineRenderer {
                 throw ExportError.renderFailed("buffer")
             }
             var rendered = 0
+            var stalled = 0
             while rendered < total {
                 let n = AVAudioFrameCount(min(Int(maxFrames), total - rendered))
                 let status = try av.renderOffline(n, to: buffer)
@@ -112,17 +122,13 @@ public final class OfflineRenderer {
                     }
                     rendered += frames
                     progress?(min(0.92, Double(rendered) / Double(max(1, total)) * 0.92))
-                    if frames == 0 { break }
-                } else { break }
+                    guard frames > 0 else { throw ExportError.renderFailed("Offline renderer returned no audio frames") }
+                    stalled = 0
+                } else if status == .cannotDoInCurrentContext && stalled < 128 {
+                    stalled += 1
+                } else { throw ExportError.renderFailed("Offline renderer stopped before the end (status \(status.rawValue))") }
             }
         }
-        engine.transport.stop(at: savedPlayStartBeat)
-        engine.playbackScope = savedPlaybackScope
-        engine.metronomeEnabled = savedMetronomeEnabled
-        if savedIsPlaying { engine.transport.play() }
-        av.stop()
-        av.disableManualRenderingMode()
-        if wasRunning { try? av.start() }
         progress?(0.92)
         return (outL, outR, peak, clipped)
     }
@@ -136,10 +142,11 @@ public final class OfflineRenderer {
 
     @discardableResult
     public func exportWithReport(project: Project, to url: URL, format: ExportFormat, progress: (@Sendable (Double) -> Void)? = nil) throws -> ExportRenderReport {
-        let rendered = try renderStereo(project: project, progress: progress)
+        let rendered = try renderStereo(project: project, progress: progress, forcedPlaybackScope: .arrangement)
         let finalURL: URL
         if format == .mp3 {
-            let wav = url.deletingPathExtension().appendingPathExtension("wav")
+            let wav = url.deletingLastPathComponent().appendingPathComponent(".lemmings-\(UUID().uuidString).wav")
+            defer { try? FileManager.default.removeItem(at: wav) }
             try writeFile(l: rendered.l, r: rendered.r, to: wav, settings: settings(.wav), project: project, format: .wav, progress: { p in progress?(0.92 + p * 0.04) })
             finalURL = try transcodeToMP3(from: wav, to: url, tempo: project.tempo, key: project.key.displayName)
         } else {
@@ -166,7 +173,7 @@ public final class OfflineRenderer {
             project.lengthBars = savedLengthBars
         }
 
-        let rendered = try renderStereo(project: project, includeMetronome: false, forcedPlaybackScope: .arrangement)
+        let rendered = try renderStereo(project: project, forcedPlaybackScope: .arrangement)
         let mono = zip(rendered.l, rendered.r).map { ($0 + $1) * 0.5 }
         let clip = AudioClip(startBeat: 0, samples: mono, sampleRate: engine.sampleRate)
         clip.displayName = "Frozen \(track.name)"
@@ -209,23 +216,25 @@ public final class OfflineRenderer {
     }
 
     private func writeFile(l: [Float], r: [Float], to url: URL, settings: [String: Any], project: Project, format: ExportFormat, progress: ((Double) -> Void)? = nil) throws {
-        let file = try AVAudioFile(forWriting: url, settings: settings)
-        let fmt = file.processingFormat
-        let chunk = 65536
-        var pos = 0
-        let n = min(l.count, r.count)
-        while pos < n {
-            let count = min(chunk, n - pos)
-            guard let buf = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: AVAudioFrameCount(count)),
-                  let ch = buf.floatChannelData else { throw ExportError.renderFailed("write buffer") }
-            for i in 0..<count { ch[0][i] = l[pos + i]; if fmt.channelCount > 1 { ch[1][i] = r[pos + i] } }
-            buf.frameLength = AVAudioFrameCount(count)
-            try file.write(from: buf)
-            pos += count
-            progress?(Double(pos) / Double(max(1, n)))
-        }
+        try autoreleasepool {
+            let file = try AVAudioFile(forWriting: url, settings: settings, commonFormat: .pcmFormatFloat32, interleaved: false)
+            let fmt = file.processingFormat
+            let chunk = 65536
+            var pos = 0
+            let n = min(l.count, r.count)
+            while pos < n {
+                let count = min(chunk, n - pos)
+                guard let buf = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: AVAudioFrameCount(count)),
+                      let ch = buf.floatChannelData else { throw ExportError.renderFailed("write buffer") }
+                for i in 0..<count { ch[0][i] = l[pos + i]; if fmt.channelCount > 1 { ch[1][i] = r[pos + i] } }
+                buf.frameLength = AVAudioFrameCount(count)
+                try file.write(from: buf)
+                pos += count
+                progress?(Double(pos) / Double(max(1, n)))
+            }
+        } // AVAudioFile is released/closed before rewriting RIFF metadata.
         if format == .wav {
-            try? writeWAVInfoMetadata(url: url, tempo: project.tempo, key: project.key.displayName, title: project.name)
+            try writeWAVInfoMetadata(url: url, tempo: project.tempo, key: project.key.displayName, title: project.name)
         }
     }
 
@@ -269,7 +278,7 @@ public final class OfflineRenderer {
         let candidates = ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/usr/bin/ffmpeg",
                           "/opt/homebrew/bin/lame", "/usr/local/bin/lame", "/usr/bin/lame"]
         guard let tool = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else {
-            throw ExportError.noEncoder("MP3 needs ffmpeg or lame installed (e.g. `brew install lame`). Your WAV was saved at \(wav.lastPathComponent); export FLAC/AAC for a native compressed file.")
+            throw ExportError.noEncoder("MP3 needs ffmpeg or lame installed (e.g. `brew install lame`). Export WAV, FLAC or AAC instead.")
         }
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: tool)

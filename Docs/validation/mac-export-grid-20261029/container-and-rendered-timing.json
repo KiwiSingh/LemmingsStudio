@@ -1,0 +1,16 @@
+{
+  "riff_sizes_and_chunk_boundaries": "passed",
+  "chunks": [
+    "JUNK",
+    "fmt ",
+    "FLLR",
+    "data",
+    "LIST"
+  ],
+  "audio_loop_repeat_seconds": 2.4,
+  "loop_rms_difference": 0.00025212247893150017,
+  "loop_rms_signal": 0.011654953454396485,
+  "independent_ffmpeg_decode_all_formats": "passed",
+  "quicklook_previews_all_formats": "passed",
+  "status": "passed"
+}

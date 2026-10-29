@@ -168,6 +168,9 @@ struct LemmingsStudioApp: App {
                 .environment(appState)
                 .frame(minWidth: 1100, minHeight: 700)
                 .onAppear {
+                    if ProcessInfo.processInfo.arguments.contains("--validate-export-grid") {
+                        appState.runExportGridRegression();return
+                    }
                     if ProcessInfo.processInfo.arguments.contains("--validate-hosting") {
                         appState.runHostingRegression();return
                     }
@@ -3530,6 +3533,7 @@ struct RecentProjectEntry: Codable, Identifiable, Hashable {
             clip.warpMode = defaultWarpMode
             WarpEngine.warp(clip, projectTempo: project.tempo)
         }
+        alignImportedAudioClip(clip)
         target.name = (target.name == "Splice" || target.name == "Audio") ? clip.displayName : target.name
         target.audioClips.append(clip)
 
@@ -3549,6 +3553,13 @@ struct RecentProjectEntry: Codable, Identifiable, Hashable {
         editStatus = "Imported audio clip ‘\(clip.displayName)’" + (clip.detectedTempo.map { " — detected \(Int($0)) BPM" } ?? "")
         registerAudioClipCreationUndo(clip, on: target, name: "Import Audio Clip")
         engine.rebuild()
+    }
+
+    func alignImportedAudioClip(_ clip: AudioClip) {
+        let natural = clip.naturalLengthBeats(projectTempo: project.tempo)
+        let length = max(arrangementSnapUnit, snapArrangementBeat(natural, rule: clip.warpEnabled ? .toNearestOrAwayFromZero : .up))
+        clip.loopLengthBeats = length
+        clip.lengthBeatsOverride = length
     }
 
     func chooseAndScanUserLibrary() {
@@ -4919,6 +4930,7 @@ struct RecentProjectEntry: Codable, Identifiable, Hashable {
         let clip = Clip(name: url.deletingPathExtension().lastPathComponent, startBeat: startBeat, lengthBeats: lengthBeats, color: target.color)
         clip.notes = parsed.notes.isEmpty ? [ClipNote(pitch: project.snap(60), start: 0, length: 1, velocity: 0.85)] : parsed.notes
         target.clips.append(clip)
+        ensureArrangementLength(coversBeat: clip.startBeat + clip.lengthBeats)
         selectedTrackID = target.id
         selectedClipID = clip.id
         workspace = .arrangement
@@ -5051,6 +5063,9 @@ struct RecentProjectEntry: Codable, Identifiable, Hashable {
         copy.loopEnabled = clip.loopEnabled
         copy.loopLengthBeats = clip.loopLengthBeats
         copy.swingAmount = clip.swingAmount
+        copy.sourceTempo = clip.sourceTempo
+        copy.tempoAutomationEnabled = clip.tempoAutomationEnabled
+        copy.tempoPoints = clip.tempoPoints
         return copy
     }
 
@@ -5183,7 +5198,9 @@ struct RecentProjectEntry: Codable, Identifiable, Hashable {
 
     @discardableResult
     func duplicateMidiClip(_ clip: Clip, on track: Track) -> Clip {
-        let copy = Clip(name: clip.name + " copy", startBeat: clip.startBeat + clip.lengthBeats, lengthBeats: clip.lengthBeats, notes: clip.notes, color: clip.color)
+        let copy = cloneMidiClip(clip)
+        copy.name += " copy"
+        copy.startBeat = snapArrangementBeat(clip.startBeat + clip.lengthBeats)
         track.clips.append(copy)
         selectedTrackID = track.id
         selectedClipID = copy.id
@@ -5212,7 +5229,7 @@ struct RecentProjectEntry: Codable, Identifiable, Hashable {
     func duplicateAudioClip(_ clip: AudioClip, on track: Track) -> AudioClip {
         let copy = cloneAudioClip(clip)
         copy.displayName = clip.displayName + " copy"
-        copy.startBeat = clip.startBeat + clip.arrangementLengthBeats(projectTempo: project.tempo)
+        copy.startBeat = snapArrangementBeat(clip.startBeat + clip.arrangementLengthBeats(projectTempo: project.tempo))
         track.audioClips.append(copy)
         selectedTrackID = track.id
         selectedClipID = nil
@@ -6542,7 +6559,18 @@ struct RecentProjectEntry: Codable, Identifiable, Hashable {
         ensureArrangementLength(coversBeat: endBeat)
     }
 
+    private func refreshAudioClipLoopAfterTempoEdit(_ clip: AudioClip, previousLoop: Double) {
+        let length = max(arrangementSnapUnit, snapArrangementBeat(clip.naturalLengthBeats(projectTempo: project.tempo), rule: clip.warpEnabled ? .toNearestOrAwayFromZero : .up))
+        // A corrected source BPM updates a single source region. Deliberately
+        // extended/trimmed arrangement regions retain their edited endpoint.
+        if let current = clip.lengthBeatsOverride, abs(current - previousLoop) < 0.0001 {
+            clip.lengthBeatsOverride = length
+        }
+        clip.loopLengthBeats = length
+    }
+
     func setWarp(_ clip: AudioClip, enabled: Bool, mode: WarpMode? = nil, originalTempo: Double? = nil) {
+        let previousLoop = clip.loopLengthBeats
         clip.warpEnabled = enabled
         if let mode { clip.warpMode = mode }
         if let originalTempo, originalTempo > 0 {
@@ -6550,6 +6578,7 @@ struct RecentProjectEntry: Codable, Identifiable, Hashable {
             clip.manualTempoOverride = true
         }
         if enabled { WarpEngine.warp(clip, projectTempo: project.tempo) } else { clip.warpedSamples = nil }
+        refreshAudioClipLoopAfterTempoEdit(clip, previousLoop: previousLoop)
         ensureAudioClipFitsArrangement(clip)
         let modeText = enabled ? " · \(clip.warpMode.rawValue) · \(Int(clip.originalTempo)) BPM" : ""
         editStatus = enabled ? "Warp enabled for ‘\(clip.displayName)’\(modeText)" : "Warp disabled for ‘\(clip.displayName)’"
@@ -6557,11 +6586,13 @@ struct RecentProjectEntry: Codable, Identifiable, Hashable {
     }
 
     func setClipTempo(_ clip: AudioClip, bpm: Double, enableWarp: Bool? = nil) {
+        let previousLoop = clip.loopLengthBeats
         let safe = min(300, max(40, bpm))
         clip.originalTempo = safe
         clip.manualTempoOverride = true
         if let enableWarp { clip.warpEnabled = enableWarp }
         if clip.warpEnabled { WarpEngine.warp(clip, projectTempo: project.tempo) } else { clip.warpedSamples = nil }
+        refreshAudioClipLoopAfterTempoEdit(clip, previousLoop: previousLoop)
         ensureAudioClipFitsArrangement(clip)
         editStatus = "Clip tempo for ‘\(clip.displayName)’ set to \(Int(safe)) BPM"
         engine.rebuild()
@@ -6572,9 +6603,11 @@ struct RecentProjectEntry: Codable, Identifiable, Hashable {
             editStatus = "No detected tempo stored for ‘\(clip.displayName)’"
             return
         }
+        let previousLoop = clip.loopLengthBeats
         clip.originalTempo = detected
         clip.manualTempoOverride = false
         if clip.warpEnabled { WarpEngine.warp(clip, projectTempo: project.tempo) } else { clip.warpedSamples = nil }
+        refreshAudioClipLoopAfterTempoEdit(clip, previousLoop: previousLoop)
         ensureAudioClipFitsArrangement(clip)
         editStatus = "Clip tempo reset to detected \(Int(detected)) BPM"
         engine.rebuild()

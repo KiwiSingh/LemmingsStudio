@@ -1,0 +1,23 @@
+{
+  "armed_midi_source_recording" : true,
+  "au_live_processor_types" : true,
+  "au_vendor_editors" : true,
+  "audio_arm_input_selection" : true,
+  "editor_window_titles" : [
+    "Untitled — LemmingsStudio",
+    "",
+    "Xfer Records: Serum 2",
+    "iZotope: Neutron 5",
+    ""
+  ],
+  "format" : "AU",
+  "insert_peak" : 0.28331702947616577,
+  "neutron_path" : "\/Volumes\/Zweidrive\/Audio-Plugins\/system\/Components\/iZNeutron5AUHook.component",
+  "one_shot_replacement_audio" : true,
+  "physical_audio_device_tested" : false,
+  "piano_roll_actual_keyboard_shortcuts" : true,
+  "plugin_project_state" : true,
+  "serum_path" : "\/Volumes\/Zweidrive\/Audio-Plugins\/system\/Components\/Serum2.component",
+  "source_peak" : 0.28331702947616577,
+  "status" : "passed"
+}

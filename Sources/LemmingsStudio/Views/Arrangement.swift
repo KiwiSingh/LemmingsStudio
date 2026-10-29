@@ -805,6 +805,7 @@ struct ArrangementView: View {
             .onChanged { value in
                 resizingClipID = clip.id
                 if resizeStarts[clip.id] == nil {
+                    clip.loopLengthBeats = clip.sourceLoopLengthForExtension(fallback: clip.lengthBeats)
                     resizeStarts[clip.id] = ClipResizeStart(startBeat: clip.startBeat, lengthBeats: clip.lengthBeats, trimStartBeats: 0)
                 }
                 guard let base = resizeStarts[clip.id] else { return }
@@ -821,7 +822,7 @@ struct ArrangementView: View {
                         clip.startBeat = newStart
                         clip.lengthBeats = newLength
                     case .right:
-                        let newLength = max(0.25, snapBeat(base.lengthBeats + delta))
+                        let newLength = max(0.25, snapBeat(base.startBeat + base.lengthBeats + delta) - base.startBeat)
                         guard abs(clip.lengthBeats - newLength) > 0.0001 else { return }
                         clip.lengthBeats = newLength
                         // Never regenerate looped MIDI notes on every mouse frame. That was
@@ -859,6 +860,9 @@ struct ArrangementView: View {
             .onChanged { value in
                 resizingClipID = clip.id
                 if resizeStarts[clip.id] == nil {
+                    if clip.lengthBeatsOverride == nil {
+                        clip.loopLengthBeats = max(app.arrangementSnapUnit, snapBeat(clip.naturalLengthBeats(projectTempo: app.project.tempo)))
+                    }
                     resizeStarts[clip.id] = ClipResizeStart(startBeat: clip.startBeat, lengthBeats: clip.arrangementLengthBeats(projectTempo: app.project.tempo), trimStartBeats: clip.trimStartBeats)
                 }
                 guard let base = resizeStarts[clip.id] else { return }
@@ -881,11 +885,12 @@ struct ArrangementView: View {
                         clip.trimStartBeats = finalTrim
                         clip.lengthBeatsOverride = finalLength
                     case .right:
-                        let newLength = max(0.25, snapBeat(base.lengthBeats + delta))
+                        let newLength = max(0.25, snapBeat(base.startBeat + base.lengthBeats + delta) - base.startBeat)
                         guard abs((clip.lengthBeatsOverride ?? base.lengthBeats) - newLength) > 0.0001 else { return }
                         clip.lengthBeatsOverride = newLength
                         if clip.loopEnabled && trackForAudioClip(clip)?.loopDragEnabled != false {
-                            clip.loopLengthBeats = max(0.25, base.lengthBeats)
+                            // Preserve the original repeat unit on every subsequent drag.
+                            clip.loopLengthBeats = max(app.arrangementSnapUnit, min(clip.loopLengthBeats, snapBeat(base.lengthBeats)))
                         }
                     }
                 }
@@ -1014,43 +1019,7 @@ struct ArrangementView: View {
     }
 
     private func loopMidiClip(_ clip: Clip, sourceLength: Double, targetLength: Double) {
-        let sourceLength = canonicalMidiLoopLength(for: clip, fallback: sourceLength)
-        let targetLength = max(sourceLength, targetLength)
-        let epsilon = 0.000_001
-        // Treat loop regions as half-open: [offset, offset + sourceLength).
-        // This matches Step Sequencer print/export and prevents a note exactly on
-        // the right edge from being copied as the final note of the previous bar.
-        let seedNotes = clip.notes
-            .filter { $0.start >= -epsilon && $0.start < sourceLength - epsilon }
-            .map { note in
-                ClipNote(pitch: note.pitch,
-                         start: max(0, note.start),
-                         length: min(note.length, max(0.03125, sourceLength - max(0, note.start))),
-                         velocity: note.velocity)
-            }
-        guard !seedNotes.isEmpty, targetLength > sourceLength + epsilon else {
-            clip.loopLengthBeats = sourceLength
-            return
-        }
-        var out: [ClipNote] = []
-        var offset = 0.0
-        while offset < targetLength - epsilon {
-            let loopEnd = min(targetLength, offset + sourceLength)
-            for note in seedNotes {
-                let start = offset + note.start
-                guard start < loopEnd - epsilon, start < targetLength - epsilon else { continue }
-                let available = min(targetLength - start, loopEnd - start)
-                guard available > epsilon else { continue }
-                // Adjacent loop repeats are half-open. Do not force a minimum
-                // length that crosses the right edge, or the last hat/kick from
-                // one repeat can bleed into the next repeat/print.
-                let maxLength = min(note.length, available)
-                out.append(ClipNote(pitch: note.pitch, start: start, length: max(0.001, maxLength), velocity: note.velocity))
-            }
-            offset += sourceLength
-        }
-        clip.notes = out
-        clip.loopLengthBeats = sourceLength
+        clip.repeatNotes(sourceLength: canonicalMidiLoopLength(for: clip, fallback: sourceLength), targetLength: targetLength)
     }
 
     private var rulerScrubLayer: some View {
