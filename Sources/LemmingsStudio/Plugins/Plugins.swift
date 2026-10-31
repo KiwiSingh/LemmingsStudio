@@ -498,7 +498,7 @@ public enum PluginScanner {
         return roles.flatMap { componentType, role in
             var desc = AudioComponentDescription()
             desc.componentType = componentType
-            return AVAudioUnitComponentManager.shared().components(matching: desc).map { comp in
+            return AVAudioUnitComponentManager.shared().components(matching: desc).filter { $0.audioComponentDescription.componentSubType != 0x4c6d4d73 || $0.audioComponentDescription.componentManufacturer != 0x4c6d5374 }.map { comp in
                 DiscoveredPlugin(id: "AU.\(role.rawValue).\(comp.manufacturerName).\(comp.name)",
                                  name: comp.name,
                                  manufacturer: comp.manufacturerName,

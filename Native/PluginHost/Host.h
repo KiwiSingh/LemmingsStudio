@@ -24,4 +24,5 @@ LP_API int lp_state(LPHost*,void* destination,int capacity);
 LP_API int lp_restore(LPHost*,const void*,int bytes);
 LP_API int lp_latency(LPHost*);
 LP_API int lp_is_instrument(LPHost*);
+LP_API void lp_set_timeline_seconds(LPHost*, double seconds);
 LP_API void lp_transport(LPHost*,double bpm,double ppq,int playing);

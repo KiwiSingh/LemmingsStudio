@@ -58,7 +58,7 @@ public final class OfflineRenderer {
     /// Render to in-memory stereo float buffers and report progress/clipping.
     public func renderStereo(project: Project,
                              progress: (@Sendable (Double) -> Void)? = nil,
-                             forcedPlaybackScope: PlaybackScope? = nil) throws -> (l: [Float], r: [Float], peak: Float, clipped: Bool) {
+                             forcedPlaybackScope: PlaybackScope? = nil, renderBlockSize: Int = 4096) throws -> (l: [Float], r: [Float], peak: Float, clipped: Bool) {
         let sr = engine.sampleRate
         let total = Int(lengthSeconds(project) * sr) + Int(sr) // +1s tail for reverbs
         let av = engine.avEngine
@@ -84,7 +84,7 @@ public final class OfflineRenderer {
         guard let format = AVAudioFormat(standardFormatWithSampleRate: sr, channels: 2) else {
             throw ExportError.renderFailed("format")
         }
-        let maxFrames: AVAudioFrameCount = 4096
+        let maxFrames = AVAudioFrameCount(max(1, min(4096, renderBlockSize)))
         var outL = [Float](); outL.reserveCapacity(total)
         var outR = [Float](); outR.reserveCapacity(total)
         var peak: Float = 0
@@ -98,6 +98,7 @@ public final class OfflineRenderer {
             engine.transport.stop(at: 0)
             engine.allNotesOff()
             engine.transport.play()
+            engine.transport.anchorSampleTime = Double(av.manualRenderingSampleTime)
             guard let buffer = AVAudioPCMBuffer(pcmFormat: av.manualRenderingFormat, frameCapacity: maxFrames) else {
                 throw ExportError.renderFailed("buffer")
             }

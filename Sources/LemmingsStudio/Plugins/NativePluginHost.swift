@@ -13,6 +13,8 @@ private final class PluginHostABI {
     typealias State = @convention(c) (UnsafeMutableRawPointer?, UnsafeMutableRawPointer?, Int32) -> Int32
     typealias Restore = @convention(c) (UnsafeMutableRawPointer?, UnsafeRawPointer?, Int32) -> Int32
     typealias Transport = @convention(c) (UnsafeMutableRawPointer?, Double, Double, Int32) -> Void
+    typealias Timeline = @convention(c) (UnsafeMutableRawPointer?, Double) -> Void
+    let timeline: Timeline
     let open: Open; let close: Close; let process: Process; let midi: Midi; let editor: Count
     let isInstrument:Count;let hide:Close; let count: Count; let info: Info; let get: Get; let set: Set; let state: State; let restore: Restore; let latency: Count; let transport: Transport
     private let library: UnsafeMutableRawPointer
@@ -24,6 +26,7 @@ private final class PluginHostABI {
             guard let ptr=dlsym(library,name) else {throw NSError(domain:"LemmingsPluginHost",code:2,userInfo:[NSLocalizedDescriptionKey:"Missing native plugin host symbol: \(name)"])}
             return unsafeBitCast(ptr,to:type)
         }
+        timeline=try symbol("lp_set_timeline_seconds",Timeline.self)
         open=try symbol("lp_open",Open.self);close=try symbol("lp_close",Close.self);process=try symbol("lp_process",Process.self);midi=try symbol("lp_midi",Midi.self);editor=try symbol("lp_editor",Count.self)
         isInstrument=try symbol("lp_is_instrument",Count.self);hide=try symbol("lp_hide_editor",Close.self);count=try symbol("lp_param_count",Count.self);info=try symbol("lp_param_info",Info.self);get=try symbol("lp_get",Get.self);set=try symbol("lp_set",Set.self);state=try symbol("lp_state",State.self);restore=try symbol("lp_restore",Restore.self);latency=try symbol("lp_latency",Count.self);transport=try symbol("lp_transport",Transport.self)
         let abi=try symbol("lp_abi",(@convention(c) () -> UInt32).self)
@@ -98,7 +101,7 @@ public final class NativeHostedPlugin: Instrument, AudioEffect, InstrumentTarget
     public func setParam(_ id:String,_ value:Double) {guard value.isFinite,let index=indices[id] ?? indices[id.lowercased()] else {return};_ = api.set(handle,index,Float(value))}
     public func getParam(_ id:String)->Double {guard let index=indices[id] ?? indices[id.lowercased()] else {return 0};return Double(api.get(handle,index))}
     public func apply(_ design:SoundDesign)throws->String {for (id,value) in design.params {setParam(id,value)};return "Applied \(design.params.count) normalized parameters to the live \(name) instance"}
-    public func setTransport(bpm:Double,beat:Double,playing:Bool){api.transport(handle,bpm,beat,playing ? 1:0)}
+    public func setTransport(bpm:Double,beat:Double,playing:Bool,timelineSeconds:Double?=nil){api.transport(handle,bpm,beat,playing ? 1:0);api.timeline(handle,timelineSeconds ?? beat * 60 / max(20,bpm))}
     public func renderStereo(left:UnsafeMutablePointer<Float>,right:UnsafeMutablePointer<Float>,frames:Int)->Bool {
         guard frames<=maximum else {return false}
         left.update(repeating:0,count:frames);right.update(repeating:0,count:frames)

@@ -29,6 +29,8 @@ public final class HostedAUInstrument: Instrument, InstrumentTarget, Automatable
     /// must attach to this exact object; opening a second AVAudioUnit creates a
     /// second Serum/Vital instance that stays at Init while the engine instance
     /// receives the automation.
+    private let musicalClock = HostedMusicalClock()
+    public func setTransport(bpm: Double, beat: Double, playing: Bool, timelineSeconds: Double? = nil) { musicalClock.update(bpm: bpm, beat: beat, playing: playing, timelineSeconds: timelineSeconds) }
     public var hostedAudioUnit: AUAudioUnit { au }
     private let sampleRate: Double
     private var sampleTime: Float64 = 0
@@ -63,6 +65,7 @@ public final class HostedAUInstrument: Instrument, InstrumentTarget, Automatable
             try self.au.allocateRenderResources()
             self.renderBlock = self.au.renderBlock
             self.midiBlock = self.au.scheduleMIDIEventBlock
+            musicalClock.install(on: self.au, sampleRate: sampleRate)
             self.ready = true
         } catch {
             free(self.abl.unsafeMutablePointer)
@@ -686,6 +689,8 @@ public final class HostedAUInstrument: Instrument, InstrumentTarget, Automatable
 /// values into the live AU through scheduleParameterBlock before the block is
 /// rendered.
 public final class HostedAUAudioEffect: AudioEffect {
+    private let musicalClock = HostedMusicalClock()
+    public func setTransport(bpm: Double, beat: Double, playing: Bool, timelineSeconds: Double? = nil) { musicalClock.update(bpm: bpm, beat: beat, playing: playing, timelineSeconds: timelineSeconds) }
     public var hostedAudioUnit: AUAudioUnit { au }
     public func capturedPresetStateBase64() -> String? {
         guard let state=au.fullStateForDocument ?? au.fullState, let data=try? PropertyListSerialization.data(fromPropertyList:state,format:.binary,options:0) else {return nil};return data.base64EncodedString()
@@ -731,6 +736,7 @@ public final class HostedAUAudioEffect: AudioEffect {
             self.au.maximumFramesToRender = AUAudioFrameCount(maxFrames)
             try self.au.allocateRenderResources()
             self.renderBlock = self.au.renderBlock
+            musicalClock.install(on: self.au, sampleRate: sampleRate)
             self.ready = true
         } catch {
             free(self.abl.unsafeMutablePointer)

@@ -63,6 +63,14 @@ public final class TempoMap {
         }
     }
 
+    public func seconds(atBeat beat: Double) -> Double {
+        guard beat > 0 else { return 0 }
+        let index = min(secAtBeat.count - 1, Int(beat / step))
+        if index >= secAtBeat.count - 1 { return (secAtBeat.last ?? 0) + (beat - (beatGrid.last ?? 0)) * 60 / max(1, points.last?.bpm ?? 120) }
+        let fraction = (beat - beatGrid[index]) / step
+        return secAtBeat[index] + fraction * (secAtBeat[index + 1] - secAtBeat[index])
+    }
+
     /// Map elapsed seconds → beat (inverse of the table). Binary search + lerp.
     public func beat(atSeconds seconds: Double) -> Double {
         guard let lastSec = secAtBeat.last, seconds > 0 else { return 0 }

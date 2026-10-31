@@ -8,7 +8,7 @@ final class MasterInsertAudioUnit: AUAudioUnit {
     private var inputs: AUAudioUnitBusArray!
     private var outputs: AUAudioUnitBusArray!
     private var scratch: AVAudioPCMBuffer?
-    var process: ((UnsafeMutablePointer<Float>, UnsafeMutablePointer<Float>, Int) -> Void)?
+    var process: ((UnsafeMutablePointer<Float>, UnsafeMutablePointer<Float>, Int, Double) -> Void)?
     override var inputBusses: AUAudioUnitBusArray { inputs }
     override var outputBusses: AUAudioUnitBusArray { outputs }
     override init(componentDescription: AudioComponentDescription, options: AudioComponentInstantiationOptions = []) throws {
@@ -35,7 +35,7 @@ final class MasterInsertAudioUnit: AUAudioUnit {
             let status = pull(flags, stamp, frames, 0, data)
             guard status == noErr else { return status }
             guard buffers.count == 2, let l = buffers[0].mData, let r = buffers[1].mData else { return kAudioUnitErr_FormatNotSupported }
-            self.process?(l.assumingMemoryBound(to: Float.self), r.assumingMemoryBound(to: Float.self), Int(frames))
+            self.process?(l.assumingMemoryBound(to: Float.self), r.assumingMemoryBound(to: Float.self), Int(frames), stamp.pointee.mSampleTime)
             // Inserts may produce reverb/delay tails even after silent input.
             flags.pointee.remove(.unitRenderAction_OutputIsSilence)
             return noErr

@@ -59,21 +59,31 @@ public final class Transport {
     public func beat(at sampleTime: Double) -> Double {
         guard anchorSampleTime >= 0 else { return wallClockBeat() }
         let seconds = (sampleTime - anchorSampleTime) / sampleRate
-        if let map = tempoMap { return playStartBeat + map.beat(atSeconds: seconds) }
+        if let map = tempoMap { return map.beat(atSeconds: map.seconds(atBeat: playStartBeat) + seconds) }
         return playStartBeat + seconds * tempo / 60.0
     }
 
+    public func timelineSeconds(atBeat beat: Double) -> Double { tempoMap?.seconds(atBeat: beat) ?? beat * 60 / max(20, tempo) }
+    public func sampleOffset(forBeat beat: Double, from sample: Double) -> Int {
+        let seconds: Double
+        if let map = tempoMap { seconds = map.seconds(atBeat: beat) - map.seconds(atBeat: playStartBeat) }
+        else { seconds = (beat - playStartBeat) * 60 / max(20, tempo) }
+        return Int((anchorSampleTime + seconds * sampleRate - sample).rounded())
+    }
     public func wallClockBeat() -> Double {
         guard isPlaying, wallClockStartTime > 0 else { return playStartBeat }
         let seconds = max(0, Date.timeIntervalSinceReferenceDate - wallClockStartTime)
-        if let map = tempoMap { return playStartBeat + map.beat(atSeconds: seconds) }
+        if let map = tempoMap { return map.beat(atSeconds: map.seconds(atBeat: playStartBeat) + seconds) }
         return playStartBeat + seconds * tempo / 60.0
     }
 }
 
 // MARK: - Per-track render state
 
+struct TimedNoteEvent { var beat: Double; var note: Int; var velocity: Float; var on: Bool }
+
 final class TrackRenderState {
+    var timedNotes: [TimedNoteEvent] = { var events: [TimedNoteEvent] = []; events.reserveCapacity(1024); return events }()
     let track: Track
     let instrument: Instrument
     let scratchL: UnsafeMutablePointer<Float>
@@ -281,7 +291,9 @@ public final class AudioEngine {
         rebuild()
     }
 
+    var validationInstrumentFactory: ((Track) -> Instrument?)?
     public func makeInstrument(for track: Track) -> Instrument {
+        if let instrument = validationInstrumentFactory?(track) { return instrument }
         // If the track targets a hosted Audio Unit (not built-in / Vital), try it.
         // Exception: a live Step Sequencer drum kit must not inherit a stale
         // plug-in target from a previous plugin-lane experiment. Otherwise Tech
@@ -487,7 +499,7 @@ public final class AudioEngine {
         }
         if let unit = HostedAUInstrument.instantiateComponentSynchronously(MasterInsertAudioUnit.component, preferOutOfProcess: false),
            let processor = unit.auAudioUnit as? MasterInsertAudioUnit {
-            processor.process = { [weak self] l, r, frames in self?.processMaster(l, r, frames: frames) }
+            processor.process = { [weak self] l, r, frames, time in self?.processMaster(l, r, frames: frames, sampleTime: time) }
             masterUnit = unit; avEngine.attach(unit)
             avEngine.connect(avEngine.mainMixerNode, to: unit, format: stereoFormat)
             avEngine.connect(unit, to: monitorMixer, format: stereoFormat)
@@ -528,7 +540,7 @@ public final class AudioEngine {
     }
 
     public func start() {
-        if ProcessInfo.processInfo.arguments.contains("--validate-hosting") || ProcessInfo.processInfo.arguments.contains("--validate-export-grid") || ProcessInfo.processInfo.arguments.contains("--validate-master") {return}
+        if ProcessInfo.processInfo.arguments.contains("--validate-hosting") || ProcessInfo.processInfo.arguments.contains("--validate-export-grid") || ProcessInfo.processInfo.arguments.contains("--validate-master") || ProcessInfo.processInfo.arguments.contains("--validate-timing") {return}
         if !avEngine.isRunning {
             avEngine.prepare()
             try? avEngine.start()
@@ -561,14 +573,16 @@ public final class AudioEngine {
     public func masterGainReductionDB() -> Double {
         masterChain.reduce(0) { $0 + (($1.1 as? GainReductionMetering)?.gainReductionDB ?? 0) }
     }
-    private func processMaster(_ l: UnsafeMutablePointer<Float>, _ r: UnsafeMutablePointer<Float>, frames: Int) {
-        let beat = transport.wallClockBeat(), tempo = currentTempo(atBeat: transport.wallClockBeat())
+    private func processMaster(_ l: UnsafeMutablePointer<Float>, _ r: UnsafeMutablePointer<Float>, frames: Int, sampleTime: Double) {
+        let beat = transport.isPlaying ? transport.beat(at: sampleTime) : transport.playStartBeat
+        let tempo = currentTempo(atBeat: beat)
         for (model, fx) in masterChain {
             if let model {
                 syncEffect(fx, from: model, atTempo: tempo)
                 if model.mono && !model.bypassed { for i in 0..<frames { let m = (l[i] + r[i]) * 0.5; l[i] = m; r[i] = m } }
             }
-            (fx as? NativeHostedPlugin)?.setTransport(bpm: tempo, beat: beat, playing: transport.isPlaying)
+            (fx as? NativeHostedPlugin)?.setTransport(bpm: tempo, beat: beat, playing: transport.isPlaying, timelineSeconds: transport.timelineSeconds(atBeat: beat))
+            (fx as? HostedAUAudioEffect)?.setTransport(bpm: tempo, beat: beat, playing: transport.isPlaying, timelineSeconds: transport.timelineSeconds(atBeat: beat))
             if !fx.bypassed { fx.process(l, r, frames: frames) }
         }
         var peak: Float = 0
@@ -621,10 +635,7 @@ public final class AudioEngine {
             let beat1 = transport.beat(at: startSample + Double(n))
             beatNow = beat0
 
-            state.pendingOffs.removeAll { off in
-                if off.beatEnd <= beat1 { state.instrument.noteOff(off.note); return true }
-                return false
-            }
+            state.timedNotes.removeAll(keepingCapacity: true)
             // Playback is scoped to the visible workspace. This prevents the
             // classic double-trigger bug where the Step Sequencer grid and a
             // printed Arrangement clip both fire the same notes.
@@ -644,12 +655,18 @@ public final class AudioEngine {
                     }
                 }
             }
+            state.pendingOffs.removeAll { off in
+                if off.beatEnd < beat1 {
+                    state.timedNotes.append(TimedNoteEvent(beat: off.beatEnd, note: off.note, velocity: 0, on: false)); return true
+                }
+                return false
+            }
         }
 
         // ---- Automation at this block's start beat ----
         if !track.automationLanes.isEmpty { state.applyAutomation(atBeat: beatNow) }
 
-        if let native=state.instrument as? NativeHostedPlugin {native.setTransport(bpm:currentTempo(atBeat:beatNow),beat:beatNow,playing:transport.isPlaying)}
+        if let native=state.instrument as? NativeHostedPlugin {native.setTransport(bpm:currentTempo(atBeat:beatNow),beat:beatNow,playing:transport.isPlaying,timelineSeconds:transport.timelineSeconds(atBeat:beatNow))}
         // ---- Source: frozen bounce > recorded audio > instrument ----
         if track.frozen, let bounce = track.bounced {
             renderClip(bounce, into: L, R, frames: n, beat0: beatNow)
@@ -661,14 +678,37 @@ public final class AudioEngine {
             if playbackScope != .stepSequencer {
                 for clip in track.audioClips where clip.isActive { renderClip(clip, into: L, R, frames: n, beat0: beatNow, accumulate: true) }
             }
-        } else if state.instrument.renderStereo(left: L, right: R, frames: n) {
-            // AU/host filled stereo directly
         } else {
-            state.instrument.render(into: L, frames: n)
-            for i in 0..<n { R[i] = L[i] }     // mono → dual
+            renderScheduledInstrument(state, left: L, right: R, frames: n, sampleTime: timestamp.pointee.mSampleTime)
         }
 
         finishStereo(state: state, track: track, project: project, L: L, R: R, n: n, abl: abl, runEffects: true, automationBeat: beatNow)
+    }
+
+    private func renderScheduledInstrument(_ state: TrackRenderState, left: UnsafeMutablePointer<Float>, right: UnsafeMutablePointer<Float>, frames: Int, sampleTime: Double) {
+        state.timedNotes.sort { a, b in a.beat == b.beat ? (!a.on && b.on) : a.beat < b.beat }
+        var cursor = 0
+        func render(to end: Int) {
+            guard end > cursor else { return }
+            let beat = transport.isPlaying ? transport.beat(at: sampleTime + Double(cursor)) : transport.playStartBeat
+            let bpm = currentTempo(atBeat: beat)
+            (state.instrument as? NativeHostedPlugin)?.setTransport(bpm: bpm, beat: beat, playing: transport.isPlaying, timelineSeconds: transport.timelineSeconds(atBeat: beat))
+            (state.instrument as? HostedAUInstrument)?.setTransport(bpm: bpm, beat: beat, playing: transport.isPlaying, timelineSeconds: transport.timelineSeconds(atBeat: beat))
+            let l = left.advanced(by: cursor), r = right.advanced(by: cursor), count = end - cursor
+            if !state.instrument.renderStereo(left: l, right: r, frames: count) {
+                state.instrument.render(into: l, frames: count)
+                for i in 0..<count { r[i] = l[i] }
+            }
+            cursor = end
+        }
+        for event in state.timedNotes {
+            let offset = max(0, min(frames, transport.sampleOffset(forBeat: event.beat, from: sampleTime)))
+            render(to: offset)
+            if event.on { state.instrument.noteOn(event.note, velocity: event.velocity) }
+            else { state.instrument.noteOff(event.note) }
+        }
+        render(to: frames)
+        state.timedNotes.removeAll(keepingCapacity: true)
     }
 
     /// Keep live DSP mirrors aligned with rack controls. Earlier builds only
@@ -755,7 +795,8 @@ public final class AudioEngine {
             for (slot, fx) in zip(state.externalEffectSlots, state.externalEffects) {
                 applyExternalPluginAutomation(track.automationLanes, to: fx, nodeID: slot.nodeID, atBeat: automationBeat)
                 guard !fx.bypassed else { continue }
-                (fx as? NativeHostedPlugin)?.setTransport(bpm:currentTempo(atBeat:automationBeat),beat:automationBeat,playing:transport.isPlaying)
+                (fx as? NativeHostedPlugin)?.setTransport(bpm:currentTempo(atBeat:automationBeat),beat:automationBeat,playing:transport.isPlaying,timelineSeconds:transport.timelineSeconds(atBeat:automationBeat))
+                (fx as? HostedAUAudioEffect)?.setTransport(bpm:currentTempo(atBeat:automationBeat),beat:automationBeat,playing:transport.isPlaying,timelineSeconds:transport.timelineSeconds(atBeat:automationBeat))
                 fx.process(L, R, frames: n)
             }
         }
@@ -846,7 +887,7 @@ public final class AudioEngine {
     private func midiEffectPlan(base: Int, velocity: Float, length: Double, track: Track, project: Project) -> MIDINotePlan {
         var pitches = [playablePitch(base, track: track, project: project)]
         var vel = max(0, min(1, velocity))
-        var len = max(0.02, length)
+        var len = max(1 / sampleRate, length)
 
         for device in track.devices where !device.bypassed {
             switch device.kind {
@@ -932,7 +973,7 @@ public final class AudioEngine {
         for clip in state.track.clips where clip.isActive {
             for note in clip.notes {
                 let absStart = clip.startBeat + note.start
-                let noteEnd = absStart + max(0.02, note.length)
+                let noteEnd = absStart + max(1 / sampleRate, note.length)
                 guard noteEnd > beat0 && absStart < beat1 else { continue }
                 let plan = midiEffectPlan(base: note.pitch, velocity: note.velocity, length: note.length, track: state.track, project: project)
                 if hasArp {
@@ -948,9 +989,9 @@ public final class AudioEngine {
                             for pitch in plan.pitches { arpPool.append(contentsOf: arpeggiatedPitches(base: pitch, track: state.track)) }
                             if arpPool.isEmpty { arpPool = plan.pitches }
                             let pitch = arpPool[step % arpPool.count]
-                            let length = min(rate * gate, noteEnd - tickBeat, beat1 - tickBeat)
+                            let length = min(rate * gate, noteEnd - tickBeat)
                             if length > 0.001 {
-                                state.instrument.noteOn(pitch, velocity: plan.velocity)
+                                state.timedNotes.append(TimedNoteEvent(beat: tickBeat, note: pitch, velocity: plan.velocity, on: true))
                                 state.pendingOffs.append((tickBeat + length, pitch))
                             }
                         }
@@ -958,7 +999,7 @@ public final class AudioEngine {
                     }
                 } else if absStart >= beat0 && absStart < beat1 {
                     for pitch in plan.pitches {
-                        state.instrument.noteOn(pitch, velocity: plan.velocity)
+                        state.timedNotes.append(TimedNoteEvent(beat: absStart, note: pitch, velocity: plan.velocity, on: true))
                         state.pendingOffs.append((absStart + plan.length, pitch))
                     }
                 }
@@ -988,7 +1029,7 @@ public final class AudioEngine {
         while b < beat1 {
             let idx = Int((b / stepLen).rounded()) % pattern.stepCount
             if idx != state.lastStepIndex {
-                for old in state.lastStepNotes { state.instrument.noteOff(old) }
+                for old in state.lastStepNotes { state.timedNotes.append(TimedNoteEvent(beat: b, note: old, velocity: 0, on: false)) }
                 let step = pattern.steps[idx]
                 var pitches: [Int] = []
                 if !step.activeNotes.isEmpty {
@@ -997,7 +1038,7 @@ public final class AudioEngine {
                             let plan = midiEffectPlan(base: layer.playbackNote(project: project), velocity: layer.playbackVelocity(baseVelocity: step.velocity), length: stepLen, track: state.track, project: project)
                             for pitch in plan.pitches {
                                 for arpPitch in arpeggiatedStepPitches(base: pitch, layer: layer, track: state.track) {
-                                    state.instrument.noteOn(arpPitch, velocity: plan.velocity)
+                                    state.timedNotes.append(TimedNoteEvent(beat: b, note: arpPitch, velocity: plan.velocity, on: true))
                                     pitches.append(arpPitch)
                                 }
                             }
@@ -1005,7 +1046,7 @@ public final class AudioEngine {
                             let plan = midiEffectPlan(base: laneNote, velocity: step.velocity, length: stepLen, track: state.track, project: project)
                             for pitch in plan.pitches {
                                 for arpPitch in arpeggiatedPitches(base: pitch, track: state.track) {
-                                    state.instrument.noteOn(arpPitch, velocity: plan.velocity)
+                                    state.timedNotes.append(TimedNoteEvent(beat: b, note: arpPitch, velocity: plan.velocity, on: true))
                                     pitches.append(arpPitch)
                                 }
                             }
@@ -1056,7 +1097,8 @@ public final class AudioEngine {
                 fx.process(clipL, clipR, frames: frames)
             }
             for fx in hostedClip?.effects ?? [] where !fx.bypassed {
-                (fx as? NativeHostedPlugin)?.setTransport(bpm:blockTempo,beat:beat0,playing:true)
+                (fx as? NativeHostedPlugin)?.setTransport(bpm:blockTempo,beat:beat0,playing:true,timelineSeconds:transport.timelineSeconds(atBeat:beat0))
+                (fx as? HostedAUAudioEffect)?.setTransport(bpm:blockTempo,beat:beat0,playing:true,timelineSeconds:transport.timelineSeconds(atBeat:beat0))
                 fx.process(clipL,clipR,frames:frames)
             }
             for i in 0..<frames { L[i] += clipL[i]; R[i] += clipR[i] }

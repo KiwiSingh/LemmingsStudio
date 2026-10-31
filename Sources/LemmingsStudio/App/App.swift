@@ -168,6 +168,7 @@ struct LemmingsStudioApp: App {
                 .environment(appState)
                 .frame(minWidth: 1100, minHeight: 700)
                 .onAppear {
+                    if ProcessInfo.processInfo.arguments.contains("--validate-timing") { appState.runTimingRegression(); return }
                     if ProcessInfo.processInfo.arguments.contains("--validate-master") { appState.runMasterRegression(); return }
                     if ProcessInfo.processInfo.arguments.contains("--validate-export-grid") {
                         appState.runExportGridRegression();return
@@ -6267,7 +6268,7 @@ struct RecentProjectEntry: Codable, Identifiable, Hashable {
         // when printing/extending a one-bar loop, creating a stray tail kick.
         // Quantize the first rendered boundary up to the first step at/after the
         // clip start, then strictly exclude the end boundary.
-        let firstBoundary = max(startBeat, (startBeat / stepLen).rounded(.up) * stepLen)
+        let firstBoundary = startBeat
         var beat = firstBoundary
         var notes: [ClipNote] = []
         while beat < endBeat - epsilon {
@@ -6419,7 +6420,7 @@ struct RecentProjectEntry: Codable, Identifiable, Hashable {
         let existingEnd = endBeatOfArrangementMaterial(on: printed)
         let requestedStart = max(0, snapArrangementBeat(engine.currentBeat))
         let printStart = max(requestedStart, snapArrangementBeat(existingEnd, rule: .up))
-        let printLength = max(arrangementSnapUnit, snapArrangementBeat(patternBeats, rule: .up))
+        let printLength = patternBeats
         _ = createArrangementClipFromStepPattern(on: printed,
                                                  name: "Printed \(source.name)",
                                                  startBeat: printStart,

@@ -1,0 +1,64 @@
+{
+  "au_host_musical_context": {
+    "beat": 12.375,
+    "bpm": 140,
+    "downbeat": 12
+  },
+  "one_bar_snap_print_onsets": [
+    169714,
+    180000,
+    200571,
+    226286,
+    241714
+  ],
+  "physical_audio_output": false,
+  "sample_accurate_midi": {
+    "97": {
+      "maximum_error_samples": 0,
+      "note_off_samples": [
+        2818,
+        13104,
+        30034,
+        80866
+      ],
+      "note_on_samples": [
+        2674,
+        12137,
+        28183,
+        80434
+      ]
+    },
+    "512": {
+      "maximum_error_samples": 0,
+      "note_off_samples": [
+        2818,
+        13104,
+        30034,
+        80866
+      ],
+      "note_on_samples": [
+        2674,
+        12137,
+        28183,
+        80434
+      ]
+    },
+    "4096": {
+      "maximum_error_samples": 0,
+      "note_off_samples": [
+        2818,
+        13104,
+        30034,
+        80866
+      ],
+      "note_on_samples": [
+        2674,
+        12137,
+        28183,
+        80434
+      ]
+    }
+  },
+  "status": "passed",
+  "tempo_map_restart_and_inverse": true
+}

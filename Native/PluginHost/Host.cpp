@@ -116,3 +116,5 @@ int lp_restore(LPHost* h,const void* data,int bytes){if(!h||!data||bytes<1||byte
 int lp_latency(LPHost* h){return h?h->processor->getLatencySamples():0;}
 int lp_is_instrument(LPHost* h){return h&&(h->processor->getPluginDescription().isInstrument)?1:0;}
 void lp_transport(LPHost* h,double bpm,double ppq,int playing){if(h&&std::isfinite(bpm)&&std::isfinite(ppq)){h->clock.bpm.store(juce::jlimit(20.,400.,bpm));h->clock.ppq.store(ppq);h->clock.playing.store(playing!=0);}}
+
+extern "C" void lp_set_timeline_seconds(LPHost* h, double seconds) { if (h && std::isfinite(seconds)) h->clock.samples = int64_t(std::llround(seconds * h->clock.rate)); }
