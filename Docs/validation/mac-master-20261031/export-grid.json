@@ -1,0 +1,13 @@
+{
+  "audio_import_snap_manual_tempo_and_repeated_extension" : true,
+  "flac_apple_playable" : true,
+  "legacy_midi_loop_and_duplicate_state" : true,
+  "m4a_apple_playable" : true,
+  "metronome_never_exported_on_or_off" : true,
+  "midi_import_and_extension_project_tempo" : true,
+  "mp3_apple_playable" : true,
+  "physical_audio_output" : false,
+  "project_tempo_state_round_trip" : true,
+  "status" : "passed",
+  "wav_apple_playable" : true
+}

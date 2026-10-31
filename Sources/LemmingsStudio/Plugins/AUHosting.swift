@@ -70,7 +70,7 @@ public final class HostedAUInstrument: Instrument, InstrumentTarget, Automatable
         }
     }
 
-    fileprivate static func instantiateComponentSynchronously(_ desc: AudioComponentDescription, preferOutOfProcess: Bool) -> AVAudioUnit? {
+    static func instantiateComponentSynchronously(_ desc: AudioComponentDescription, preferOutOfProcess: Bool) -> AVAudioUnit? {
         let options: AudioComponentInstantiationOptions = preferOutOfProcess && !AudioUnitCatalog.isLocal(desc) ? [.loadOutOfProcess] : []
         let semaphore = DispatchSemaphore(value: 0)
         final class Box { var unit: AVAudioUnit? = nil }

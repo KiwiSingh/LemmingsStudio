@@ -23,7 +23,7 @@ struct MixerView: View {
                     ForEach(app.project.returnBuses) { bus in
                         ReturnStrip(bus: bus)
                     }
-                    MasterStrip()
+                    MasterChannelStrip()
                         .padding(.leading, 6)
                 }
                 .padding(12)

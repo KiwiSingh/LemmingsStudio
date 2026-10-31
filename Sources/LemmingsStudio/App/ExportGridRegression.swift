@@ -1,10 +1,12 @@
 import Foundation
 import AVFoundation
+import AppKit
 
 private enum ExportGridRegressionState { static var started = false }
 
 extension AppState {
     @MainActor func runExportGridRegression() {
+        if CommandLine.arguments.contains("--headless-validation") { NSApp.hide(nil) }
         guard !ExportGridRegressionState.started else { return }
         ExportGridRegressionState.started = true
         guard let index = CommandLine.arguments.firstIndex(of: "--validate-export-grid"), CommandLine.arguments.count > index + 1 else { return }

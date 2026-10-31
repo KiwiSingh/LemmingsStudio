@@ -218,6 +218,13 @@ public final class AudioEngine {
     private var sourceNodes: [UUID: AVAudioSourceNode] = [:]
     private var returnStates: [UUID: ReturnRenderState] = [:]
     private var returnSourceNodes: [UUID: AVAudioSourceNode] = [:]
+    private var masterUnit: AVAudioUnit?
+    private let monitorMixer = AVAudioMixerNode()
+    private var masterStock: [UUID:AudioEffect] = [:]
+    private var masterChain: [(DeviceModel?, AudioEffect)] = []
+    public private(set) var masterProcessingError: String? = nil
+    private var masterOutputPeak: Float = 0
+    private var masterGain: Float = 1
     private var metronomeNode: AVAudioSourceNode?
     /// Cache hosted AU instruments across graph rebuilds so a Sound Agent patch
     /// written into Serum 2 survives record/count-in/track UI rebuilds.
@@ -268,6 +275,7 @@ public final class AudioEngine {
     public func attach(project: Project) {
         if self.project !== project { nativePluginCache.removeAll(); externalAUCache.removeAll(); hostedAUInstrumentCache.removeAll() }
         self.project = project
+        masterGain = project.masterVolume
         transport.tempo = project.tempo
         transport.beatsPerBar = project.beatsPerBar
         rebuild()
@@ -411,9 +419,12 @@ public final class AudioEngine {
         })
         hostedAUInstrumentCache = hostedAUInstrumentCache.filter { validHostedAUKeys.contains($0.key) }
         #endif
-        let validSlotIDs=Set(project.tracks.flatMap{track in (track.externalPluginSlots + track.audioClips.flatMap(\.externalPluginSlots)).map(\.id)})
+        let validSlotIDs=Set(project.masterExternalPluginSlots.map(\.id) + project.tracks.flatMap{track in (track.externalPluginSlots + track.audioClips.flatMap(\.externalPluginSlots)).map(\.id)})
         nativePluginCache=nativePluginCache.filter{validSlotIDs.contains($0.key)}
         externalAUCache=externalAUCache.filter{validSlotIDs.contains($0.key)}
+        if let masterUnit { avEngine.detach(masterUnit) }
+        masterUnit = nil
+        masterChain.removeAll(); masterStock.removeAll(); masterOutputPeak = 0
         for node in sourceNodes.values { avEngine.detach(node) }
         for node in returnSourceNodes.values { avEngine.detach(node) }
         if let metronomeNode { avEngine.detach(metronomeNode) }
@@ -456,6 +467,36 @@ public final class AudioEngine {
         }
 
 
+        if !avEngine.attachedNodes.contains(monitorMixer) { avEngine.attach(monitorMixer) }
+        avEngine.disconnectNodeOutput(avEngine.mainMixerNode)
+        avEngine.mainMixerNode.outputVolume = 1
+        masterProcessingError = nil
+        for index in project.masterExternalPluginSlots.indices {
+            let slot = project.masterExternalPluginSlots[index]
+            if let fx = externalPlugin(for: slot), (fx as? NativeHostedPlugin)?.isInstrument != true {
+                fx.bypassed = slot.bypassed; masterChain.append((nil, fx))
+                project.masterExternalPluginSlots[index].hosted = true
+            } else {
+                project.masterExternalPluginSlots[index].hosted = false
+                masterProcessingError = "Could not load master audio effect: \(slot.name)"
+            }
+        }
+        for device in project.masterDevices {
+            let fx = DeviceFactory.make(from: device, sampleRate: sampleRate)
+            masterStock[device.id] = fx; masterChain.append((device, fx))
+        }
+        if let unit = HostedAUInstrument.instantiateComponentSynchronously(MasterInsertAudioUnit.component, preferOutOfProcess: false),
+           let processor = unit.auAudioUnit as? MasterInsertAudioUnit {
+            processor.process = { [weak self] l, r, frames in self?.processMaster(l, r, frames: frames) }
+            masterUnit = unit; avEngine.attach(unit)
+            avEngine.connect(avEngine.mainMixerNode, to: unit, format: stereoFormat)
+            avEngine.connect(unit, to: monitorMixer, format: stereoFormat)
+        } else {
+            masterProcessingError = "Master audio processor could not initialize"
+            avEngine.connect(avEngine.mainMixerNode, to: monitorMixer, format: stereoFormat)
+        }
+        avEngine.connect(monitorMixer, to: avEngine.outputNode, format: stereoFormat)
+
         let clickNode = AVAudioSourceNode(format: stereoFormat) { [weak self] isSilence, timestamp, frameCount, abl in
             guard let self else { isSilence.pointee = true; return noErr }
             self.renderMetronome(timestamp: timestamp, frames: Int(frameCount), abl: abl)
@@ -468,7 +509,7 @@ public final class AudioEngine {
         }
         metronomeNode = clickNode
         avEngine.attach(clickNode)
-        avEngine.connect(clickNode, to: avEngine.mainMixerNode, format: stereoFormat)
+        avEngine.connect(clickNode, to: monitorMixer, format: stereoFormat)
 
         for bus in project.returnBuses {
             let rstate = ReturnRenderState(bus: bus, capacity: maxFrames, sampleRate: sampleRate)
@@ -487,7 +528,7 @@ public final class AudioEngine {
     }
 
     public func start() {
-        if ProcessInfo.processInfo.arguments.contains("--validate-hosting") || ProcessInfo.processInfo.arguments.contains("--validate-export-grid") {return}
+        if ProcessInfo.processInfo.arguments.contains("--validate-hosting") || ProcessInfo.processInfo.arguments.contains("--validate-export-grid") || ProcessInfo.processInfo.arguments.contains("--validate-master") {return}
         if !avEngine.isRunning {
             avEngine.prepare()
             try? avEngine.start()
@@ -510,26 +551,29 @@ public final class AudioEngine {
     public func meterPeak(for track: Track) -> Float { states[track.id]?.meterPeak ?? 0 }
     public func meterIsClipping(for track: Track) -> Bool { (states[track.id]?.meterPeak ?? 0) >= 0.985 }
 
-    /// Master output level (0...1, mapped onto the main mixer's output volume).
     public var masterVolume: Float {
-        get { avEngine.mainMixerNode.outputVolume }
-        set { avEngine.mainMixerNode.outputVolume = max(0, min(1, newValue)) }
+        get { project?.masterVolume ?? masterGain }
+        set { masterGain = max(0, min(1, newValue)); project?.masterVolume = masterGain }
     }
-
-    /// Approximate master meter: the loudest currently-audible track. Cheap, and
-    /// avoids installing a tap on the audio thread just to drive a UI bar.
-    public func masterMeterPeak() -> Float {
-        var peak: Float = 0
-        for state in states.values { peak = max(peak, state.meterPeak) }
-        for state in returnStates.values { peak = max(peak, state.meterPeak) }
-        return min(1, peak * masterVolume)
+    public func masterMeterPeak() -> Float { masterOutputPeak }
+    public func masterMeterIsClipping() -> Bool { masterOutputPeak >= 0.985 }
+    public func masterEffect(for device: DeviceModel) -> AudioEffect? { masterStock[device.id] }
+    public func masterGainReductionDB() -> Double {
+        masterChain.reduce(0) { $0 + (($1.1 as? GainReductionMetering)?.gainReductionDB ?? 0) }
     }
-
-    public func masterMeterIsClipping() -> Bool {
+    private func processMaster(_ l: UnsafeMutablePointer<Float>, _ r: UnsafeMutablePointer<Float>, frames: Int) {
+        let beat = transport.wallClockBeat(), tempo = currentTempo(atBeat: transport.wallClockBeat())
+        for (model, fx) in masterChain {
+            if let model {
+                syncEffect(fx, from: model, atTempo: tempo)
+                if model.mono && !model.bypassed { for i in 0..<frames { let m = (l[i] + r[i]) * 0.5; l[i] = m; r[i] = m } }
+            }
+            (fx as? NativeHostedPlugin)?.setTransport(bpm: tempo, beat: beat, playing: transport.isPlaying)
+            if !fx.bypassed { fx.process(l, r, frames: frames) }
+        }
         var peak: Float = 0
-        for state in states.values { peak = max(peak, state.meterPeak) }
-        for state in returnStates.values { peak = max(peak, state.meterPeak) }
-        return peak * masterVolume >= 0.985
+        for i in 0..<frames { l[i] *= masterGain; r[i] *= masterGain; peak = max(peak, max(abs(l[i]), abs(r[i]))) }
+        masterOutputPeak = peak
     }
 
     /// The live AnalogSynth instance the audio thread is rendering, for in-place

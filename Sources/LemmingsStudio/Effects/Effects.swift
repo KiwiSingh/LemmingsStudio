@@ -625,19 +625,22 @@ public final class EQEightEffect: AudioEffect, SampleRateAware {
 
 // MARK: - Compressor (stereo-linked detector)
 
-public final class CompressorEffect: AudioEffect, SampleRateAware, SidechainAudioEffect {
+public final class CompressorEffect: AudioEffect, SampleRateAware, SidechainAudioEffect, GainReductionMetering {
     public let kind = DeviceKind.compressor
     public var bypassed = false
     private var sr = 44100.0
     private var envDB = -60.0
+    private var reduction = 0.0
+    public var gainReductionDB: Double { bypassed ? 0 : reduction }
     public var thresholdDB = -18.0, ratio = 4.0, attackMS = 10.0, releaseMS = 120.0, makeupDB = 0.0, kneeDB = 6.0
     public var sidechainMix = 1.0
     public init() {}
     func setSampleRate(_ s: Double) { sr = s }
-    public func reset() { envDB = -60 }
+    public func reset() { envDB = -60; reduction = 0 }
     public func process(_ left: UnsafeMutablePointer<Float>, _ right: UnsafeMutablePointer<Float>, frames: Int) {
         guard !bypassed else { return }
         let atk = exp(-1.0/(attackMS/1000.0*sr)), rel = exp(-1.0/(releaseMS/1000.0*sr)), makeup = pow(10, makeupDB/20)
+        reduction = 0
         for n in 0..<frames {
             let peak = max(abs(Double(left[n])), abs(Double(right[n])))
             let levelDB = 20*log10(max(peak,1e-6))
@@ -646,6 +649,7 @@ public final class CompressorEffect: AudioEffect, SampleRateAware, SidechainAudi
             var gainDB = 0.0; let over = envDB - thresholdDB
             if over > kneeDB/2 { gainDB = thresholdDB + over/ratio - envDB }
             else if over > -kneeDB/2 { let x = over + kneeDB/2; gainDB = ((1/ratio - 1)*x*x)/(2*kneeDB) }
+            reduction = max(reduction, -gainDB)
             let g = Float(pow(10, gainDB/20) * makeup)
             left[n] *= g; right[n] *= g
         }
@@ -653,6 +657,7 @@ public final class CompressorEffect: AudioEffect, SampleRateAware, SidechainAudi
     public func processSidechain(_ left: UnsafeMutablePointer<Float>, _ right: UnsafeMutablePointer<Float>, sidechainL: UnsafePointer<Float>, sidechainR: UnsafePointer<Float>, frames: Int) {
         guard !bypassed else { return }
         let atk = exp(-1.0/(attackMS/1000.0*sr)), rel = exp(-1.0/(releaseMS/1000.0*sr)), makeup = pow(10, makeupDB/20)
+        reduction = 0
         for n in 0..<frames {
             let detector = max(abs(Double(sidechainL[n])), abs(Double(sidechainR[n])))
             let program = max(abs(Double(left[n])), abs(Double(right[n])))
@@ -663,6 +668,7 @@ public final class CompressorEffect: AudioEffect, SampleRateAware, SidechainAudi
             var gainDB = 0.0; let over = envDB - thresholdDB
             if over > kneeDB/2 { gainDB = thresholdDB + over/ratio - envDB }
             else if over > -kneeDB/2 { let x = over + kneeDB/2; gainDB = ((1/ratio - 1)*x*x)/(2*kneeDB) }
+            reduction = max(reduction, -gainDB)
             let g = Float(pow(10, gainDB/20) * makeup)
             left[n] *= g; right[n] *= g
         }
@@ -688,7 +694,9 @@ public final class CompressorEffect: AudioEffect, SampleRateAware, SidechainAudi
 /// It uses a stereo-linked detector, soft knee, program-dependent auto makeup, optional
 /// sidechain detector input, dry/wet parallel compression, gain-reduction range limiting,
 /// and a gentle output drive stage for mix-bus "glue".
-public final class GlueBusCompressorEffect: AudioEffect, SampleRateAware, SidechainAudioEffect {
+public final class GlueBusCompressorEffect: AudioEffect, SampleRateAware, SidechainAudioEffect, GainReductionMetering {
+    public var gainReductionDB: Double { bypassed ? 0 : max(0, -20 * log10(max(0.000001, 1 - mix + mix * pow(10, lastGainDB / 20)))) }
+
     public let kind = DeviceKind.glueCompressor
     public var bypassed = false
 

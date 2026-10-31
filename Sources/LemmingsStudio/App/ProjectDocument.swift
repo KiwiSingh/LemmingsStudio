@@ -22,6 +22,8 @@ struct ProjectDocument: Codable {
     var bitDepth: String?
     var channelFormat: String?
     var groups: [TrackGroupDoc]?
+    var masterVolume: Float?
+    var masterExternalPluginSlots: [ExternalPluginSlotDoc]?
     var masterDevices: [DeviceDoc]?
     var swingAmount: Double?
     var customChannelCount: Int?
@@ -29,7 +31,7 @@ struct ProjectDocument: Codable {
 
     enum CodingKeys: String, CodingKey {
         case version, name, tempo, bpm, beatsPerBar, lengthBars, keyRoot, keyName, scaleName, keySnapEnabled
-        case tempoAutomationEnabled, tempoPoints, tracks, returnBuses, sampleRate, bitDepth, channelFormat, groups, masterDevices, swingAmount, customChannelCount, channelNames
+        case tempoAutomationEnabled, tempoPoints, tracks, returnBuses, sampleRate, bitDepth, channelFormat, groups, masterDevices, masterExternalPluginSlots, masterVolume, swingAmount, customChannelCount, channelNames
     }
 
     init(from decoder: Decoder) throws {
@@ -52,6 +54,8 @@ struct ProjectDocument: Codable {
         bitDepth = try c.decodeIfPresent(String.self, forKey: .bitDepth)
         channelFormat = try c.decodeIfPresent(String.self, forKey: .channelFormat)
         groups = try c.decodeIfPresent([TrackGroupDoc].self, forKey: .groups)
+        masterVolume = try c.decodeIfPresent(Float.self, forKey: .masterVolume)
+        masterExternalPluginSlots = try c.decodeIfPresent([ExternalPluginSlotDoc].self, forKey: .masterExternalPluginSlots)
         masterDevices = try c.decodeIfPresent([DeviceDoc].self, forKey: .masterDevices)
         swingAmount = try c.decodeIfPresent(Double.self, forKey: .swingAmount)
         customChannelCount = try c.decodeIfPresent(Int.self, forKey: .customChannelCount)
@@ -77,6 +81,8 @@ struct ProjectDocument: Codable {
         channelFormat = project.channelFormat.rawValue
         originalJSON = project.documentSourceJSON
         groups = project.groups.map(TrackGroupDoc.init)
+        masterVolume = project.masterVolume
+        masterExternalPluginSlots = project.masterExternalPluginSlots.map(ExternalPluginSlotDoc.init)
         masterDevices = project.masterDevices.map(DeviceDoc.init)
         swingAmount = project.swingAmount
         customChannelCount = project.customChannelCount
@@ -115,6 +121,8 @@ struct ProjectDocument: Codable {
         if let bitDepth { project.bitDepth = ProjectBitDepth(rawValue: bitDepth) ?? .float32 }
         if let channelFormat { project.channelFormat = ProjectChannelFormat(rawValue: channelFormat) ?? .stereo }
         if let groups { project.groups = groups.map { $0.make() } }
+        if let masterVolume, masterVolume.isFinite { project.masterVolume = max(0, min(1, masterVolume)) }
+        if let masterExternalPluginSlots { project.masterExternalPluginSlots = masterExternalPluginSlots.map { $0.make() } }
         if let masterDevices { project.masterDevices = masterDevices.map { $0.make() } }
         if let swingAmount { project.swingAmount = swingAmount }
         if let customChannelCount { project.customChannelCount = customChannelCount }
@@ -462,6 +470,7 @@ struct ExternalPluginSlotDoc: Codable {
     var role: String
     var path: String?
     var hosted: Bool
+    var bypassed: Bool?
     var presetStateBase64: String?
     var presetName: String?
     init(_ slot: ExternalPluginSlot) {
@@ -471,6 +480,7 @@ struct ExternalPluginSlotDoc: Codable {
         format = slot.format.rawValue
         role = slot.role.rawValue
         path = slot.path
+        bypassed = slot.bypassed
         hosted = slot.hosted
         presetStateBase64 = slot.presetStateBase64
         presetName = slot.presetName
@@ -486,6 +496,7 @@ struct ExternalPluginSlotDoc: Codable {
             path: path
         )
         var slot = ExternalPluginSlot(plugin: plugin, hosted: hosted)
+        slot.bypassed = bypassed ?? false
         slot.presetStateBase64 = presetStateBase64
         slot.presetName = presetName
         if let id { slot.id = id }

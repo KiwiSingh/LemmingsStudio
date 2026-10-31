@@ -140,6 +140,9 @@ private struct DeviceCard: View {
                 }
             }
             .opacity(device.bypassed ? 0.5 : 1)
+            if app.engine.liveNode(track: track, nodeID: device.nodeID) is GainReductionMetering {
+                GainReductionReadout { app.engine.isRunning ? (app.engine.liveNode(track: track, nodeID: device.nodeID) as? GainReductionMetering)?.gainReductionDB ?? 0 : 0 }
+            }
 
             if device.kind == .fxArchitect {
                 fxArchitectPresetStrip

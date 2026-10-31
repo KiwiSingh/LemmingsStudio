@@ -1915,6 +1915,7 @@ struct CompactMixerDeck: View {
                 ForEach(app.project.returnBuses) { bus in
                     CompactBusStrip(bus: bus)
                 }
+                MasterChannelStrip()
             }
             .padding(12)
         }

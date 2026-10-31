@@ -1,0 +1,14 @@
+{
+  "actual_master_render_and_bypass" : true,
+  "compressed_peak" : 0.40000000596046448,
+  "compressor_expected_db" : 13.484550065040281,
+  "compressor_measured_db" : 13.484550065040281,
+  "dry_peak" : 0.40000000596046448,
+  "limiter_measured_db" : 5.9794003400073645,
+  "master_peak_reduction_db" : 25.237079960390176,
+  "master_plugin_format" : "AU",
+  "master_plugin_render_editor_and_restore" : true,
+  "metronome_excluded" : true,
+  "physical_audio_output" : false,
+  "status" : "passed"
+}

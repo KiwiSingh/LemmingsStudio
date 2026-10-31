@@ -399,6 +399,7 @@ public struct ExternalPluginSlot: Identifiable, Hashable, Sendable {
     public var role: PluginRole
     public var path: String?
     public var hosted: Bool
+    public var bypassed: Bool = false
     public var presetStateBase64: String? = nil
     public var presetName: String? = nil
 
@@ -665,6 +666,8 @@ public enum ProjectBitDepth: String, CaseIterable, Identifiable, Sendable {
     public var tracks: [Track] = []
     public var returnBuses: [ReturnBus] = [ReturnBus(name: "A Reverb", devices: [DeviceModel(kind: .reverb)]), ReturnBus(name: "B Delay", devices: [DeviceModel(kind: .delay)])]
     public var groups: [TrackGroup] = []
+    public var masterVolume: Float = 1
+    public var masterExternalPluginSlots: [ExternalPluginSlot] = []
     public var masterDevices: [DeviceModel] = [DeviceModel(kind: .limiter)]
 
     // Global key for snapping (the whole-song key-snap from feature #4)

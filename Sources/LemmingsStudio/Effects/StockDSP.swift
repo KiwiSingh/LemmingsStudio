@@ -259,7 +259,7 @@ public final class GateEffect: AudioEffect, SampleRateAware {
     public func getParam(_ id:String)->Double{switch id{case"threshold":return thresholdDB;case"attack":return attackMS;case"release":return releaseMS;case"floor":return floorDB;default:return 0}}
 }
 
-public final class LimiterEffect: AudioEffect, SampleRateAware {
+public final class LimiterEffect: AudioEffect, SampleRateAware, GainReductionMetering {
     public let kind = DeviceKind.limiter
     public var bypassed = false
     public var ceilingDB = -0.3
@@ -272,6 +272,7 @@ public final class LimiterEffect: AudioEffect, SampleRateAware {
     private var lookL = [Float](repeating: 0, count: 2048)
     private var lookR = [Float](repeating: 0, count: 2048)
     private var index = 0
+    public var gainReductionDB: Double { bypassed ? 0 : max(0, -20 * log10(Double(max(0.000001, envGain)))) }
     private var envGain: Float = 1
 
     public init() { resizeLookahead() }

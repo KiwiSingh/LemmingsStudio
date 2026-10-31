@@ -168,6 +168,7 @@ struct LemmingsStudioApp: App {
                 .environment(appState)
                 .frame(minWidth: 1100, minHeight: 700)
                 .onAppear {
+                    if ProcessInfo.processInfo.arguments.contains("--validate-master") { appState.runMasterRegression(); return }
                     if ProcessInfo.processInfo.arguments.contains("--validate-export-grid") {
                         appState.runExportGridRegression();return
                     }
@@ -672,9 +673,10 @@ struct RecentProjectEntry: Codable, Identifiable, Hashable {
     var discordApplicationID = UserDefaults.standard.string(forKey: "discordApplicationID") ?? DiscordPresenceConfig.applicationID
     var discordRPCEnabled = UserDefaults.standard.object(forKey: "discordRPCEnabled") as? Bool ?? true
     var inspector: InspectorTab = .circle
+    private var isValidationRun: Bool { CommandLine.arguments.contains { $0.hasPrefix("--validate-") } }
     var workspace: WorkspaceTab = .session {
         didSet {
-            UserDefaults.standard.set(workspace.rawValue, forKey: "LemmingsStudio.ActiveWorkspace")
+            if !isValidationRun { UserDefaults.standard.set(workspace.rawValue, forKey: "LemmingsStudio.ActiveWorkspace") }
             applyPlaybackScopeForWorkspace()
         }
     }
@@ -973,10 +975,9 @@ struct RecentProjectEntry: Codable, Identifiable, Hashable {
         seedDemoProject()
         engine.attach(project: project)
         engine.metronomeEnabled = metronomeEnabled
-        UserDefaults.standard.set(workspace.rawValue, forKey: "LemmingsStudio.ActiveWorkspace")
+        if !isValidationRun { UserDefaults.standard.set(workspace.rawValue, forKey: "LemmingsStudio.ActiveWorkspace") }
         applyPlaybackScopeForWorkspace()
-        setupMIDI()
-        recorder.selectInputDevice(uid: audioInputDeviceUID)
+        if !isValidationRun { setupMIDI(); recorder.selectInputDevice(uid: audioInputDeviceUID) }
         audioInputDevice = recorder.selectedInputDeviceName
         recorder.onDiagnostic = { [weak self] message in
             // Already delivered on the main queue by the recorder.
@@ -1014,7 +1015,7 @@ struct RecentProjectEntry: Codable, Identifiable, Hashable {
             DispatchQueue.main.async { self.showStartupSplashIfNeeded() }
             return
         }
-        guard showSplashScreen, preSplashWindowController == nil, splashWindowController == nil else { return }
+        guard !isValidationRun, showSplashScreen, preSplashWindowController == nil, splashWindowController == nil else { return }
 
         let parent = NSApp.keyWindow ?? NSApp.mainWindow ?? NSApp.windows.first(where: { $0.isVisible })
         if let preSplashURL = MagmaVancePreSplashAsset.url {
@@ -1600,6 +1601,9 @@ struct RecentProjectEntry: Codable, Identifiable, Hashable {
     }
 
     private func captureHostedPluginStatesForProjectSave() {
+        for i in project.masterExternalPluginSlots.indices {
+            if let state = engine.capturedExternalState(for: project.masterExternalPluginSlots[i]) { project.masterExternalPluginSlots[i].presetStateBase64 = state }
+        }
         for track in project.tracks {
             for clip in track.audioClips {
                 for index in clip.externalPluginSlots.indices {
@@ -1638,7 +1642,7 @@ struct RecentProjectEntry: Codable, Identifiable, Hashable {
     }
 
     func writeRecoverySnapshot() {
-        guard !project.tracks.isEmpty else { return }
+        guard !isValidationRun, !project.tracks.isEmpty else { return }
         do {
             try FileManager.default.createDirectory(at: recoveryDirectoryURL, withIntermediateDirectories: true)
             captureHostedPluginStatesForProjectSave()
@@ -4121,6 +4125,32 @@ struct RecentProjectEntry: Codable, Identifiable, Hashable {
     }
 
     @MainActor
+    @discardableResult
+    func addMasterPlugin(_ plugin: DiscoveredPlugin) -> Bool {
+        guard plugin.role == .effect, plugin.format == .vst3 || plugin.format == .audioUnit else {
+            editStatus = "Master inserts require an audio effect (AU or VST3)."; return false
+        }
+        let slot = ExternalPluginSlot(plugin: plugin, hosted: false)
+        project.masterExternalPluginSlots.append(slot)
+        engine.rebuild()
+        if (engine.liveNativePlugin(for: slot) != nil && engine.liveNativePlugin(for: slot)?.isInstrument == false) || engine.liveExternalAU(for: slot) != nil {
+            project.masterExternalPluginSlots[project.masterExternalPluginSlots.count - 1].hosted = true
+            editStatus = "Added \(plugin.name) to Master"; return true
+        }
+        editStatus = engine.masterProcessingError ?? "Master plugin could not load; its slot is retained for replacement."
+        return false
+    }
+    func addMasterEffect(_ kind: DeviceKind) {
+        project.masterDevices.append(DeviceModel(kind: kind)); engine.rebuild()
+    }
+    @MainActor
+    func handleMasterDrop(_ text: String) -> Bool {
+        if let id = PluginDragPasteboard.pluginID(from: text), let plugin = plugin(withID: id) { return addMasterPlugin(plugin) }
+        if let kind = PluginDragPasteboard.effectKind(from: text) { addMasterEffect(kind); return true }
+        return false
+    }
+
+    @MainActor
     func openPluginGUI(_ slot: ExternalPluginSlot) {
         if let native=engine.liveNativePlugin(for:slot) {
             editStatus=native.showEditor() ? "Opened live \(slot.name) VST3 editor" : "Could not create the \(slot.name) editor"
@@ -4301,7 +4331,7 @@ struct RecentProjectEntry: Codable, Identifiable, Hashable {
 
     @MainActor
     private func showHostedAudioUnitEditor(title: String, audioUnit: AUAudioUnit, windowKey: UUID) {
-        let slots=project.tracks.flatMap{$0.externalPluginSlots + $0.audioClips.flatMap(\.externalPluginSlots)}
+        let slots=project.masterExternalPluginSlots + project.tracks.flatMap{$0.externalPluginSlots + $0.audioClips.flatMap(\.externalPluginSlots)}
         let owner=slots.first(where:{$0.id==windowKey}).flatMap{engine.liveAUOwner(for:$0)}
         let controller = LemmingsPluginEditorWindowController(title: title, audioUnit: audioUnit, owner: owner)
         pluginEditorWindows[windowKey] = controller
